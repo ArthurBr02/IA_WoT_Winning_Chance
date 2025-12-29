@@ -26,8 +26,9 @@ replay_pid*
 # tous les .idea des sous projets
 **/.idea/*
 
-# tous les .env des sous projets
+# tous les .env des sous projets en excluant les .env.example
 **/.env
+!**/.env.example
 
 # tous les pycache__ des sous projets
 **/__pycache__/*
