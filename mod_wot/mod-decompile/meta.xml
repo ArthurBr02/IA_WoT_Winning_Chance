@@ -1,0 +1,25 @@
+﻿<root>
+	<id>panikaxa.quick_demount_2.0</id>
+	<version>2.2.0</version>
+	<name>Quick Demount 2.0</name>
+	<description lang="ru">
+		Мод предоставляет возможность, при нажатии правой кнопки мыши на слоте оборудования выбрать из контекстного
+		меню танк, на котором установлено данное оборудование и автоматически демонтировать его с выбранного танка.
+	</description>
+	<description lang="en">
+		The mod allows you to right-click on an equipment slot, select a tank from the context menu that has this
+		equipment installed, and automatically uninstall the equipment from the chosen tank.
+	</description>
+	<changelog lang="ru">
+		Версия 2.2.0:
+		- рефакторинг кода.
+		Версия 2.1.0:
+		- добавлена возможность докупить оборудование из контекстного меню.
+	</changelog>
+	<changelog lang="en">
+		Version 2.2.0:
+		- Code refactoring.
+		Version 2.1.0:
+		- Added the ability to purchase additional equipment directly from the context menu.
+	</changelog>
+</root>

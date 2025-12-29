@@ -1,0 +1,25 @@
+# Python
+*.pyc
+*.pyo
+__pycache__/
+
+# Environment
+.env
+
+# Build
+*.wotmod
+*.zip
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Données de test
+battle_data/
+*.json
+!example_output.json
+
+# Config locale
+config_local.py

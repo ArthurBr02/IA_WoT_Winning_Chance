@@ -1,0 +1,129 @@
+{
+    "timestamp": "2024-12-29T15:45:32.123456",
+    "map": {
+        "id": 15,
+        "name": "Prokhorovka",
+        "geometry_name": "15_komarin",
+        "game_mode": "random"
+    },
+    "teams": {
+        "spawn_1": [
+            {
+                "name": "Player1",
+                "vehicle_id": 123456,
+                "tank": "IS-7",
+                "tank_tier": 10,
+                "tank_type": "heavyTank",
+                "clan": "ALPHA",
+                "is_alive": true,
+                "stats": {
+                    "battles": 15234,
+                    "wins": 8123,
+                    "win_rate": 53.32,
+                    "avg_damage": 2145.67,
+                    "avg_frags": 1.23,
+                    "avg_spotted": 0.87,
+                    "total_damage": 32678945,
+                    "total_frags": 18738
+                }
+            },
+            {
+                "name": "TankDestroyer99",
+                "vehicle_id": 123457,
+                "tank": "Obj. 268 V4",
+                "tank_tier": 10,
+                "tank_type": "AT-SPG",
+                "clan": "",
+                "is_alive": true,
+                "stats": {
+                    "battles": 8456,
+                    "wins": 4234,
+                    "win_rate": 50.07,
+                    "avg_damage": 2567.89,
+                    "avg_frags": 1.45,
+                    "avg_spotted": 0.34,
+                    "total_damage": 21714123,
+                    "total_frags": 12261
+                }
+            },
+            {
+                "name": "MediumMaster",
+                "vehicle_id": 123458,
+                "tank": "Obj. 140",
+                "tank_tier": 10,
+                "tank_type": "mediumTank",
+                "clan": "BETA",
+                "is_alive": true,
+                "stats": {
+                    "battles": 22341,
+                    "wins": 12987,
+                    "win_rate": 58.13,
+                    "avg_damage": 2234.56,
+                    "avg_frags": 1.67,
+                    "avg_spotted": 1.89,
+                    "total_damage": 49923876,
+                    "total_frags": 37329
+                }
+            }
+        ],
+        "spawn_2": [
+            {
+                "name": "HeavyHitter",
+                "vehicle_id": 789012,
+                "tank": "Maus",
+                "tank_tier": 10,
+                "tank_type": "heavyTank",
+                "clan": "GAMMA",
+                "is_alive": true,
+                "stats": {
+                    "battles": 11234,
+                    "wins": 5678,
+                    "win_rate": 50.54,
+                    "avg_damage": 1987.34,
+                    "avg_frags": 0.98,
+                    "avg_spotted": 0.45,
+                    "total_damage": 22321456,
+                    "total_frags": 11009
+                }
+            },
+            {
+                "name": "ArtilleryKing",
+                "vehicle_id": 789013,
+                "tank": "Obj. 261",
+                "tank_tier": 10,
+                "tank_type": "SPG",
+                "clan": "",
+                "is_alive": true,
+                "stats": {
+                    "battles": 6789,
+                    "wins": 3456,
+                    "win_rate": 50.91,
+                    "avg_damage": 1678.23,
+                    "avg_frags": 0.76,
+                    "avg_spotted": 0.12,
+                    "total_damage": 11391234,
+                    "total_frags": 5159
+                }
+            },
+            {
+                "name": "LightScout",
+                "vehicle_id": 789014,
+                "tank": "T-100 LT",
+                "tank_tier": 10,
+                "tank_type": "lightTank",
+                "clan": "DELTA",
+                "is_alive": true,
+                "stats": {
+                    "battles": 18765,
+                    "wins": 10234,
+                    "win_rate": 54.54,
+                    "avg_damage": 1234.56,
+                    "avg_frags": 1.12,
+                    "avg_spotted": 2.87,
+                    "total_damage": 23167890,
+                    "total_frags": 21017
+                }
+            }
+        ]
+    }
+}

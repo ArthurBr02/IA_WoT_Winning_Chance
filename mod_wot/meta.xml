@@ -1,0 +1,6 @@
+<root>
+    <id>mod_battle_data_collector</id>
+    <version>1.0.0</version>
+    <name>Battle Data Collector</name>
+    <description>Collecte les données de bataille (joueurs, spawns, map) pour l'IA de prédiction</description>
+</root>

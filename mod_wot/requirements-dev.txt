@@ -1,0 +1,6 @@
+# Dépendances pour le développement du mod
+pytest>=7.0.0
+pytest-cov>=3.0.0
+mock>=4.0.3
+flake8>=4.0.0
+black>=22.0.0

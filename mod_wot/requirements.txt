@@ -1,0 +1,61 @@
+# ============================================================================
+# Battle Data Collector - Dépendances Python
+# ============================================================================
+# Ce fichier liste les dépendances Python pour le développement et l'analyse
+# des données collectées par le mod.
+#
+# IMPORTANT: Le mod lui-même n'a PAS besoin de ces dépendances car il
+# utilise uniquement les bibliothèques intégrées à World of Tanks (Python 2.7)
+#
+# Ces dépendances sont pour:
+# - Développement et tests du mod
+# - Analyse des fichiers JSON générés
+# - Entraînement du modèle d'IA
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Développement et Tests (optionnel)
+# ----------------------------------------------------------------------------
+# pytest>=7.0.0          # Framework de tests
+# mock>=4.0.3            # Mocking pour tests Python 2.7
+
+# ----------------------------------------------------------------------------
+# Analyse des Données (pour traiter les fichiers JSON générés)
+# ----------------------------------------------------------------------------
+pandas>=1.3.0           # Analyse de données
+numpy>=1.21.0           # Calculs numériques
+matplotlib>=3.4.0       # Visualisation
+seaborn>=0.11.0         # Visualisation avancée
+
+# ----------------------------------------------------------------------------
+# Machine Learning (pour le modèle d'IA de prédiction)
+# ----------------------------------------------------------------------------
+scikit-learn>=1.0.0     # Algorithmes ML
+tensorflow>=2.8.0       # Deep Learning (optionnel)
+# ou
+# pytorch>=1.10.0       # Alternative à TensorFlow
+
+# ----------------------------------------------------------------------------
+# Utilitaires
+# ----------------------------------------------------------------------------
+python-dotenv>=0.19.0   # Chargement .env (pour scripts d'analyse)
+requests>=2.27.0        # Requêtes HTTP (pour scripts utilisant l'API)
+
+# ----------------------------------------------------------------------------
+# Jupyter (pour exploration interactive)
+# ----------------------------------------------------------------------------
+jupyter>=1.0.0          # Notebooks interactifs
+ipython>=7.31.0         # Shell Python interactif
+
+# ============================================================================
+# Installation
+# ============================================================================
+# Pour installer toutes les dépendances:
+#   pip install -r requirements.txt
+#
+# Pour installer uniquement l'analyse de données:
+#   pip install pandas numpy matplotlib seaborn
+#
+# Pour installer uniquement le ML:
+#   pip install scikit-learn
+# ============================================================================
