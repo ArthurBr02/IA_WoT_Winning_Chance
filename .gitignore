@@ -28,3 +28,6 @@ replay_pid*
 
 # tous les .env des sous projets
 **/.env
+
+# tous les pycache__ des sous projets
+**/__pycache__/*
