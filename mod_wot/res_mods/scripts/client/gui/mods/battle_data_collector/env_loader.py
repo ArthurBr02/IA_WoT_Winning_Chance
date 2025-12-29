@@ -99,8 +99,6 @@ def load_env():
                 f.write('# Battle Data Collector - configuration\n')
                 f.write('# L\'API locale (FastAPI) fait le proxy vers Wargaming + Tomato\n')
                 f.write('INTERNAL_API_BASE_URL=http://127.0.0.1:8000/api\n')
-                f.write('# Si configuree cote API: header X-API-Key\n')
-                f.write('INTERNAL_API_KEY=\n')
                 f.write('# IMPORTANT: la cle Wargaming se configure cote API (api/.env)\n')
                 f.write('# WARGAMING_API_KEY=YOUR_API_KEY_HERE\n')
                 f.write('SERVER_REGION=eu\n')

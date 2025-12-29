@@ -10,6 +10,7 @@ import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -53,8 +54,11 @@ public class PlayerService {
     }
 
     public static List<Player> fetchPlayers(List<Long> playerIds) {
-        return playerIds.stream()
-                .map(PlayerService::fetchPlayer)
-                .toList();
+        List<Player> players = new ArrayList<>();
+        for (Long playerId : playerIds) {
+            Player player = fetchPlayer(playerId);
+            players.add(player);
+        }
+        return players;
     }
 }

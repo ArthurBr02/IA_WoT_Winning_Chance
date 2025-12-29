@@ -1,0 +1,5 @@
+joblib~=1.5.2
+pandas~=2.3.3
+numpy~=2.3.3
+torch~=2.9.0+cu130
+scikit-learn~=1.7.2

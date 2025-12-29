@@ -18,15 +18,19 @@ class StatsFetcher(object):
     """Récupère les statistiques des joueurs via l'API locale (proxy)."""
     
     def __init__(self):
-        self.api_base_url = getattr(config, 'INTERNAL_API_BASE_URL', 'http://127.0.0.1:8000/api')
-        self.internal_api_key = getattr(config, 'INTERNAL_API_KEY', '')
+        # Compat: certains fichiers de config utilisent API_BASE_URL, d'autres INTERNAL_API_BASE_URL.
+        self.api_base_url = (
+            getattr(config, 'INTERNAL_API_BASE_URL', None)
+            or getattr(config, 'API_BASE_URL', None)
+            or 'http://127.0.0.1:8000/api'
+        )
         self._cache = {}  # Cache pour éviter les requêtes multiples
         self._tomato_cache = {}  # Cache Tomato (account_id -> data)
 
     def _api_get(self, endpoint, params):
         """GET helper compatible Python 2.7 vers l'API locale."""
         if not self.api_base_url:
-            raise Exception('INTERNAL_API_BASE_URL non configure')
+            raise Exception('API base URL non configure (API_BASE_URL / INTERNAL_API_BASE_URL)')
 
         try:
             query = urllib.urlencode(params)
@@ -39,11 +43,6 @@ class StatsFetcher(object):
         url = '{}/{}?{}'.format(base, path, query)
 
         req = urllib2.Request(url)
-        try:
-            if self.internal_api_key:
-                req.add_header('X-API-Key', self.internal_api_key)
-        except Exception:
-            pass
 
         response = urllib2.urlopen(req, timeout=config.API_TIMEOUT)
         return json.loads(response.read())

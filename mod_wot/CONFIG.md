@@ -48,7 +48,6 @@ mod_wot/
 | Variable | Type | Défaut | Description |
 |----------|------|--------|-------------|
 | `INTERNAL_API_BASE_URL` | string | `http://127.0.0.1:8000/api` | Base URL de l'API locale (proxy) |
-| `INTERNAL_API_KEY` | string | `` | Clé interne (si activée côté API) |
 | `WARGAMING_API_KEY` | string | `YOUR_API_KEY_HERE` | (Legacy) La clé Wargaming se configure désormais côté `api/.env` |
 | `SERVER_REGION` | string | `eu` | Région du serveur (eu/na/ru/asia) |
 | `COLLECT_PLAYER_STATS` | boolean | `true` | Activer collecte de stats |
@@ -61,7 +60,6 @@ mod_wot/
 ```env
 # API locale (FastAPI)
 INTERNAL_API_BASE_URL=http://127.0.0.1:8000/api
-INTERNAL_API_KEY=
 
 # Configuration serveur
 SERVER_REGION=eu

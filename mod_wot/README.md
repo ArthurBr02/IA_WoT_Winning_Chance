@@ -35,8 +35,7 @@ Mod pour World of Tanks qui collecte automatiquement les données de bataille po
 Le mod n'appelle plus directement Wargaming/Tomato. Il appelle uniquement l'API locale dans le dossier `api/`.
 
 1. Dans `api/.env`, configurez:
-  - `WARGAMING_APP_ID=<votre Application ID>`
-  - (optionnel) `INTERNAL_API_KEY=<une_clé>`
+  - `WARGAMING_APP_ID=<votre Application ID>` (ou `WARGAMING_API_KEY`)
 2. Lancez l'API:
   ```bash
   cd api
@@ -61,8 +60,6 @@ Le mod n'appelle plus directement Wargaming/Tomato. Il appelle uniquement l'API 
 2. Éditez le fichier `.env` et remplacez les valeurs:
    ```env
   INTERNAL_API_BASE_URL=http://127.0.0.1:8000/api
-  # si défini côté API (INTERNAL_API_KEY), ajoutez la même valeur ici
-  INTERNAL_API_KEY=
    SERVER_REGION=eu
    COLLECT_PLAYER_STATS=true
    ```
@@ -79,7 +76,6 @@ res_mods/scripts/client/gui/mods/mod_battle_data_collector/config.py
 Et modifiez:
 ```python
 INTERNAL_API_BASE_URL = 'http://127.0.0.1:8000/api'
-INTERNAL_API_KEY = ''
 SERVER_REGION = 'eu'  # Options: 'eu', 'na', 'ru', 'asia'
 ```
 

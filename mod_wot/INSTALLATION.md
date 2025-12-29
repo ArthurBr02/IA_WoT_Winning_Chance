@@ -55,8 +55,6 @@
 2. Éditez le fichier `.env`:
    ```env
    INTERNAL_API_BASE_URL=http://127.0.0.1:8000/api
-   # si vous avez configuré INTERNAL_API_KEY côté API:
-   INTERNAL_API_KEY=
    SERVER_REGION=eu
    COLLECT_PLAYER_STATS=true
    ```

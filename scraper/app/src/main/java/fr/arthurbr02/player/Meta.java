@@ -1,5 +1,8 @@
 package fr.arthurbr02.player;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class Meta {
     private String status;
     private String id;
