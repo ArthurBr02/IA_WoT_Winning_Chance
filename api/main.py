@@ -18,6 +18,8 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # Pydantic v2: éviter le warning de conflit avec le namespace protégé `model_`
+        protected_namespaces=("settings_",),
     )
 
     api_title: str = "API"
