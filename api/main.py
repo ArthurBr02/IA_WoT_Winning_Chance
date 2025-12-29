@@ -367,12 +367,19 @@ async def _resolve_account_ids_via_wg_route(pseudos: List[str], region: str) -> 
 
     # Tentative batch 'exact' (nick1,nick2,...) comme le mod
     search = ",".join(normalized)
-    resp = await wg_account_list(
-        search=search,
-        type="exact",
-        limit=min(len(normalized), 100),
-        region=region,
-    )
+    try:
+        resp = await wg_account_list(
+            search=search,
+            type="exact",
+            limit=min(len(normalized), 100),
+            region=region,
+        )
+    except HTTPException as e:
+        # Dégradation contrôlée: si WG est indisponible, on ne plante pas la prédiction.
+        # On retournera des vecteurs de zéros => prédiction moins fiable mais l'UX reste fluide.
+        logger.warning("WG proxy failed for account/list: %s", str(e.detail))
+        missing = {name: "wg_proxy_failed" for name in normalized}
+        return {}, missing
 
     if not isinstance(resp, dict) or resp.get("status") != "ok":
         raise HTTPException(status_code=502, detail="WG account/list proxy returned error")
@@ -407,9 +414,12 @@ async def _fetch_tomato_overall_via_route(account_id: int, server: str) -> Optio
         payload = await tomato_player_overall(server=server, account_id=int(account_id))
         if isinstance(payload, dict):
             return payload
-    except HTTPException:
-        raise
-    except Exception:
+    except HTTPException as e:
+        # Important: ne pas propager en 502 global.
+        logger.warning("Tomato proxy failed for account_id=%s: %s", str(account_id), str(e.detail))
+        return None
+    except Exception as e:
+        logger.warning("Tomato fetch failed for account_id=%s: %s", str(account_id), str(e))
         return None
     return None
 
@@ -429,9 +439,13 @@ async def _build_prediction_features(pseudos: List[str], spawn: int, region: Opt
     sem = asyncio.Semaphore(8)
 
     async def _one(name: str, aid: int) -> Tuple[str, Optional[Dict[str, Any]]]:
-        async with sem:
-            payload = await _fetch_tomato_overall_via_route(aid, tomato_server)
-            return name, payload
+        try:
+            async with sem:
+                payload = await _fetch_tomato_overall_via_route(aid, tomato_server)
+                return name, payload
+        except Exception as e:
+            logger.warning("Tomato task failed for %s (%s): %s", name, str(aid), str(e))
+            return name, None
 
     tasks = [_one(name, aid) for (name, aid) in account_ids.items()]
     results: List[Tuple[str, Optional[Dict[str, Any]]]] = await asyncio.gather(*tasks, return_exceptions=False)
@@ -621,7 +635,7 @@ async def predict_win_get(
     )
 
     features = await _build_prediction_features_from_request(payload, region=region, map_id=map_id)
-    return await _predict_win_from_features(
+    predicted = await _predict_win_from_features(
         map_id=int(map_id),
         user_spawn=user_spawn,
         user=user,
@@ -629,6 +643,8 @@ async def predict_win_get(
         team2_names=team2,
         features=features,
     )
+    logger.info("predict_win_result user=%s predicted=%s", user, str(predicted))
+    return predicted
 
 
 @app.post(f"{settings.api_prefix}/predict/win", response_model=bool)
@@ -649,6 +665,7 @@ async def predict_win_post(
         team2_names=team2,
         features=features,
     )
+    logger.info("predict_win_result user=%s predicted=%s", payload.user, str(predicted))
     return predicted
 
 
@@ -728,11 +745,18 @@ async def wg_account_list(
                 },
             )
         except httpx.RequestError as exc:
+            logger.exception(
+                "Upstream WG request failed url=%s region=%s search=%s",
+                target_url,
+                resolved_region,
+                search,
+            )
             raise HTTPException(status_code=502, detail=f"Upstream WG request failed: {exc}") from exc
 
     try:
         return resp.json()
     except ValueError:
+        logger.error("Upstream WG returned non-JSON url=%s status=%s", target_url, str(resp.status_code))
         raise HTTPException(status_code=502, detail="Upstream WG returned non-JSON")
 
 
@@ -754,9 +778,11 @@ async def tomato_player_overall(
         try:
             resp = await client.get(target_url)
         except httpx.RequestError as exc:
+            logger.exception("Upstream Tomato request failed url=%s", target_url)
             raise HTTPException(status_code=502, detail=f"Upstream Tomato request failed: {exc}") from exc
 
     try:
         return resp.json()
     except ValueError:
+        logger.error("Upstream Tomato returned non-JSON url=%s status=%s", target_url, str(resp.status_code))
         raise HTTPException(status_code=502, detail="Upstream Tomato returned non-JSON")

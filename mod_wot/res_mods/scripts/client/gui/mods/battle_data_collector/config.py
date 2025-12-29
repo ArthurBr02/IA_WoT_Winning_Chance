@@ -68,6 +68,12 @@ COLLECT_PLAYER_STATS = False
 # Prédiction de victoire via l'API locale (/predict/win)
 COLLECT_PREDICTION = True
 
+# Afficher un message en jeu au début de la bataille (SystemMessages)
+SHOW_PREDICTION_ON_SCREEN = True
+
+# Préfixe du message affiché (chat/toast)
+PREDICTION_MESSAGE_PREFIX = '[IA]'
+
 # Stats à collecter (WG)
 STATS_FIELDS = [
     'battles',

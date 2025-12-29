@@ -50,6 +50,43 @@ class StatsFetcher(object):
         response = urllib2.urlopen(req, timeout=timeout)
         return json.loads(response.read())
 
+    def _api_post(self, endpoint, params, payload_obj, timeout=None):
+        """POST helper compatible Python 2.7 vers l'API locale (JSON)."""
+        if not self.api_base_url:
+            raise Exception('API_BASE_URL non configure')
+
+        if timeout is None:
+            timeout = getattr(config, 'API_TIMEOUT', 5)
+
+        try:
+            query = urllib.urlencode(params or {})
+        except Exception:
+            query = '&'.join(['%s=%s' % (k, v) for (k, v) in (params or {}).items()])
+
+        base = self.api_base_url.rstrip('/')
+        path = endpoint.lstrip('/')
+        url = '{}/{}'.format(base, path)
+        if query:
+            url = '{}?{}'.format(url, query)
+
+        data = json.dumps(payload_obj)
+        try:
+            # urllib2 attend bytes
+            if isinstance(data, unicode):
+                data = data.encode('utf-8')
+        except Exception:
+            try:
+                data = data.encode('utf-8')
+            except Exception:
+                pass
+
+        req = urllib2.Request(url, data=data)
+        req.add_header('Content-Type', 'application/json')
+        req.add_header('Accept', 'application/json')
+
+        response = urllib2.urlopen(req, timeout=timeout)
+        return json.loads(response.read())
+
     def _safe_utf8(self, value):
         try:
             if isinstance(value, unicode):
@@ -95,22 +132,7 @@ class StatsFetcher(object):
             pass
         return None
 
-    def _split_teams_from_player_names(self, player_names):
-        """player_names est attendu dans l'ordre: spawn_1 puis spawn_2 (cf BattleDataCollector._getAllPlayerNames)."""
-        try:
-            names = [n for n in (player_names or []) if n]
-        except Exception:
-            names = []
-
-        # Cas standard: 30 joueurs -> 15/15
-        if len(names) >= 30:
-            return names[:15], names[15:30]
-
-        # Fallback: split au milieu
-        mid = int(len(names) / 2)
-        return names[:mid], names[mid:]
-
-    def predict_win_and_print(self, player_names, user_name=None, user_spawn=None, map_id=None):
+    def predict_win_and_print(self, team1_names, team2_names, user_name=None, user_spawn=None, map_id=None):
         """Appelle l'API locale pour prédire la victoire et affiche le résultat."""
         try:
             # Auto-détection contexte si pas fourni
@@ -119,7 +141,8 @@ class StatsFetcher(object):
             if map_id is None:
                 map_id = self._try_get_current_map_id()
 
-            team1, team2 = self._split_teams_from_player_names(player_names)
+            team1 = [n for n in (team1_names or []) if n]
+            team2 = [n for n in (team2_names or []) if n]
 
             if not user_name:
                 print('[BattleDataCollector] Prediction: utilisateur inconnu (BigWorld.player().name indisponible)')
@@ -142,18 +165,26 @@ class StatsFetcher(object):
                 print('[BattleDataCollector] Prediction: user_spawn invalide pour {} ({})'.format(user_name, user_spawn))
                 return None
 
+            try:
+                print('[BattleDataCollector] Prediction request: user={} user_spawn={} map_id={} spawn_1={} spawn_2={}'.format(
+                    user_name, int(user_spawn), int(map_id), len(team1), len(team2)
+                ))
+            except Exception:
+                pass
+
             region = getattr(config, 'SERVER_REGION', 'eu')
-            params = {
+            pred_timeout = getattr(config, 'PREDICTION_TIMEOUT', getattr(config, 'API_TIMEOUT', 5))
+
+            # POST JSON: on envoie uniquement les joueurs présents + leur spawn; le padding est côté API.
+            payload = {
                 'user': self._safe_utf8(user_name),
                 'user_spawn': int(user_spawn),
                 'map_id': int(map_id),
-                'region': self._safe_utf8(region),
-                'spawn_1': self._safe_utf8(','.join([self._safe_utf8(n) for n in team1])),
-                'spawn_2': self._safe_utf8(','.join([self._safe_utf8(n) for n in team2])),
+                'players': ([{'name': self._safe_utf8(n), 'spawn': 1} for n in team1] +
+                            [{'name': self._safe_utf8(n), 'spawn': 2} for n in team2])
             }
 
-            pred_timeout = getattr(config, 'PREDICTION_TIMEOUT', getattr(config, 'API_TIMEOUT', 5))
-            result = self._api_get('predict/win', params, timeout=pred_timeout)
+            result = self._api_post('predict/win', {'region': self._safe_utf8(region)}, payload, timeout=pred_timeout)
 
             # L'API renvoie un bool JSON -> bool Python
             print('[BattleDataCollector] Prediction victoire pour {} (spawn {}): {}'.format(user_name, user_spawn, str(result)))
@@ -334,15 +365,15 @@ class StatsFetcher(object):
         thread.daemon = True
         thread.start()
 
-    def fetch_prediction_async(self, player_names, user_name=None, user_spawn=None, map_id=None, callback=None):
+    def fetch_prediction_async(self, team1_names, team2_names, user_name=None, user_spawn=None, map_id=None, callback=None):
         """Lance uniquement la prédiction (sans récupérer les stats) dans un thread."""
-        thread = Thread(target=self._fetch_prediction_thread, args=(player_names, user_name, user_spawn, map_id, callback))
+        thread = Thread(target=self._fetch_prediction_thread, args=(team1_names, team2_names, user_name, user_spawn, map_id, callback))
         thread.daemon = True
         thread.start()
 
-    def _fetch_prediction_thread(self, player_names, user_name, user_spawn, map_id, callback):
+    def _fetch_prediction_thread(self, team1_names, team2_names, user_name, user_spawn, map_id, callback):
         try:
-            pred = self.predict_win_and_print(player_names, user_name=user_name, user_spawn=user_spawn, map_id=map_id)
+            pred = self.predict_win_and_print(team1_names, team2_names, user_name=user_name, user_spawn=user_spawn, map_id=map_id)
             if callback:
                 callback(pred)
         except Exception as e:
@@ -357,10 +388,7 @@ class StatsFetcher(object):
             # Le mod ne doit pas récupérer les stats (Tomato/WG) : l'API le fait côté serveur.
             stats = {}
 
-            try:
-                self.predict_win_and_print(player_names)
-            except Exception:
-                pass
+            # NOTE: ici on ne tente pas de prédire, car on n'a pas l'info spawn_1/spawn_2.
             
             # Callback avec les résultats
             if callback:

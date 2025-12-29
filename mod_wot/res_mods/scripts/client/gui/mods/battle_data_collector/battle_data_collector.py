@@ -96,6 +96,8 @@ class BattleDataCollector(object):
             except Exception:
                 count = 0
 
+            # Tant que les 30 joueurs ne sont pas visibles, on retente.
+            # Sinon, on risque de prédire avec des équipes incomplètes.
             if count == 0 and retries > 0:
                 if not self._collectCallbackPending:
                     self._collectCallbackPending = True
@@ -123,12 +125,27 @@ class BattleDataCollector(object):
             player_names = self._getAllPlayerNames()
 
             # Prédiction de victoire via l'API (ne récupère pas les stats côté mod)
+            # Prédiction de victoire via l'API (sans stats côté mod)
+            # On envoie uniquement les joueurs présents + leur spawn; le padding est côté API.
             try:
-                if getattr(config, 'COLLECT_PREDICTION', False) and self.stats_fetcher and player_names:
-                    self.stats_fetcher.fetch_prediction_async(player_names)
+                if getattr(config, 'COLLECT_PREDICTION', False) and self.stats_fetcher and teams:
+                    team1_names = []
+                    team2_names = []
+                    try:
+                        team1_names = [p.get('name') for p in (teams.get('spawn_1') or []) if p.get('name')]
+                        team2_names = [p.get('name') for p in (teams.get('spawn_2') or []) if p.get('name')]
+                    except Exception:
+                        team1_names = []
+                        team2_names = []
+
+                    if team1_names or team2_names:
+                        try:
+                            print('[BattleDataCollector] Prediction request: spawn_1={} spawn_2={}'.format(len(team1_names), len(team2_names)))
+                        except Exception:
+                            pass
+                        self.stats_fetcher.fetch_prediction_async(team1_names, team2_names)
             except Exception:
                 pass
-
             # Récupérer les statistiques des joueurs si activé
             if config.COLLECT_PLAYER_STATS and self.stats_fetcher and player_names:
                 print("[BattleDataCollector] Récupération stats pour {} joueurs".format(len(player_names)))
@@ -141,6 +158,56 @@ class BattleDataCollector(object):
 
         except Exception as e:
             print("[BattleDataCollector] Erreur _collectBattleDataWithRetry: {}".format(str(e)))
+
+    def _onPredictionReceived(self, prediction):
+        """Callback de prédiction: affiche un message en jeu (thread-safe)."""
+        try:
+            if not getattr(config, 'SHOW_PREDICTION_ON_SCREEN', True):
+                return
+
+            def _show():
+                try:
+                    prefix = getattr(config, 'PREDICTION_MESSAGE_PREFIX', '[IA]')
+
+                    # prediction est attendu bool (True/False) ou None
+                    if prediction is True:
+                        msg = u"{} Prédiction: Victoire".format(prefix)
+                        msg_type = 'info'
+                    elif prediction is False:
+                        msg = u"{} Prédiction: Défaite".format(prefix)
+                        msg_type = 'warning'
+                    else:
+                        msg = u"{} Prédiction: indisponible".format(prefix)
+                        msg_type = 'warning'
+
+                    # Essayer SystemMessages (toast/centre écran). Fallback: log.
+                    try:
+                        from gui import SystemMessages
+                        try:
+                            if msg_type == 'warning':
+                                sm_type = SystemMessages.SM_TYPE.Warning
+                            else:
+                                sm_type = SystemMessages.SM_TYPE.Information
+                        except Exception:
+                            sm_type = SystemMessages.SM_TYPE.Information
+
+                        SystemMessages.pushMessage(msg, type=sm_type)
+                        return
+                    except Exception:
+                        pass
+
+                    print("[BattleDataCollector] {}".format(msg))
+                except Exception as e:
+                    print("[BattleDataCollector] Erreur affichage prediction: {}".format(str(e)))
+
+            # Le callback arrive depuis un thread; repasser sur le thread BigWorld.
+            try:
+                BigWorld.callback(0.1, _show)
+            except Exception:
+                _show()
+
+        except Exception:
+            pass
 
     def _defaultStats(self):
         # Schéma stable: toujours les mêmes clés
