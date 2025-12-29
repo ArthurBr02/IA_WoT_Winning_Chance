@@ -48,35 +48,18 @@ Le mod n'appelle plus directement Wargaming/Tomato. Il appelle uniquement l'API 
 2. Créez une nouvelle application
 3. Copiez votre `Application ID`
 
-### 3. Configurer le mod avec .env (Recommandé)
+### 3. Configurer le mod (config.py)
 
-**Option A: Utiliser le fichier .env (Sécurisé)**
-
-1. Copiez le fichier `.env.example` en `.env`:
-   ```bash
-   copy .env.example .env
-   ```
-
-2. Éditez le fichier `.env` et remplacez les valeurs:
-   ```env
-  INTERNAL_API_BASE_URL=http://127.0.0.1:8000/api
-   SERVER_REGION=eu
-   COLLECT_PLAYER_STATS=true
-   ```
-
-3. Le fichier `.env` est automatiquement ignoré par Git (sécurité)
-
-**Option B: Éditer directement config.py**
-
-Si vous préférez ne pas utiliser `.env`, éditez directement:
+Éditez directement:
 ```
-res_mods/scripts/client/gui/mods/mod_battle_data_collector/config.py
+res_mods/scripts/client/gui/mods/battle_data_collector/config.py
 ```
 
-Et modifiez:
+Principaux paramètres:
 ```python
-INTERNAL_API_BASE_URL = 'http://127.0.0.1:8000/api'
+API_BASE_URL = 'http://127.0.0.1:8000/api'
 SERVER_REGION = 'eu'  # Options: 'eu', 'na', 'ru', 'asia'
+COLLECT_PLAYER_STATS = True
 ```
 
 ## Utilisation

@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-Chargeur de variables d'environnement depuis le fichier .env
-Compatible Python 2.7 (pas de python-dotenv disponible)
+"""Utilitaires d'environnement (Python 2.7).
+
+Le mod n'utilise plus de fichier `.env`. Ce module conserve:
+- la détection du dossier WoT (get_wot_root)
+- des helpers pour lire des variables d'environnement déjà présentes (os.environ)
 """
 
 import os
@@ -61,94 +63,11 @@ def get_wot_root():
     return None
 
 
-def load_env():
+    """Compat: ancien chargeur de `.env` (désactivé).
+
+    La configuration du mod est désormais dans `config.py`.
     """
-    Charge les variables d'environnement depuis le fichier .env
-    Cherche dans le dossier racine de WoT
-    """
-    # Trouver le fichier .env
-
-    # Méthode 1: racine WoT déterminée de façon robuste
-    wot_root = get_wot_root()
-    if wot_root:
-        try:
-            env_path = os.path.join(wot_root, '.env')
-            if os.path.exists(env_path):
-                _parse_env_file(env_path)
-                print("[BattleDataCollector] Variables d'environnement chargees depuis: {}".format(env_path))
-                return True
-        except Exception:
-            pass
-
-    # Méthode 2: dossier courant (fallback)
-    try:
-        env_path = os.path.join(os.getcwd(), '.env')
-        if os.path.exists(env_path):
-            _parse_env_file(env_path)
-            print("[BattleDataCollector] Variables d'environnement chargees depuis: {}".format(env_path))
-            return True
-    except Exception:
-        pass
-    
-    # Option: créer un template minimal dans la racine WoT (ou cwd en fallback)
-    try:
-        target_dir = get_wot_root() or os.getcwd()
-        env_path = os.path.join(target_dir, '.env')
-        if not os.path.exists(env_path):
-            with open(env_path, 'w') as f:
-                f.write('# Battle Data Collector - configuration\n')
-                f.write('# L\'API locale (FastAPI) fait le proxy vers Wargaming + Tomato\n')
-                f.write('INTERNAL_API_BASE_URL=http://127.0.0.1:8000/api\n')
-                f.write('# IMPORTANT: la cle Wargaming se configure cote API (api/.env)\n')
-                f.write('# WARGAMING_API_KEY=YOUR_API_KEY_HERE\n')
-                f.write('SERVER_REGION=eu\n')
-                f.write('OUTPUT_DIR=battle_data\n')
-                f.write('API_TIMEOUT=5\n')
-                f.write('COLLECT_PLAYER_STATS=true\n')
-                f.write('DEBUG_MODE=false\n')
-            print("[BattleDataCollector] .env créé automatiquement: {}".format(env_path))
-            print("[BattleDataCollector] Editez ce fichier et redémarrez WoT")
-    except Exception:
-        pass
-
-    print("[BattleDataCollector] Fichier .env non trouve, utilisation des valeurs par defaut")
     return False
-
-
-def _parse_env_file(filepath):
-    """
-    Parse le fichier .env et charge les variables dans os.environ
-    
-    Args:
-        filepath: Chemin vers le fichier .env
-    """
-    try:
-        with open(filepath, 'r') as f:
-            for line in f:
-                line = line.strip()
-                
-                # Ignorer les lignes vides et les commentaires
-                if not line or line.startswith('#'):
-                    continue
-                
-                # Parser la ligne KEY=VALUE
-                if '=' in line:
-                    key, value = line.split('=', 1)
-                    key = key.strip()
-                    value = value.strip()
-                    
-                    # Retirer les guillemets si présents
-                    if value.startswith('"') and value.endswith('"'):
-                        value = value[1:-1]
-                    elif value.startswith("'") and value.endswith("'"):
-                        value = value[1:-1]
-                    
-                    # Définir la variable d'environnement
-                    os.environ[key] = value
-    
-    except IOError as e:
-        print("[BattleDataCollector] Erreur lecture .env: {}".format(str(e)))
-
 
 def get_env(key, default=None):
     """

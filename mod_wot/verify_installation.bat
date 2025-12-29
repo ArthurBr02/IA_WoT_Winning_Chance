@@ -23,16 +23,7 @@ if exist "%TARGET_DIR%" (
 )
 
 echo.
-echo [2] Verification du fichier .env...
-if exist "%WOT_PATH%\.env" (
-    echo    OK: .env trouve
-    echo    Chemin: %WOT_PATH%\.env
-) else (
-    echo    ATTENTION: .env non trouve
-)
-
-echo.
-echo [3] Verification de python.log...
+echo [2] Verification de python.log...
 if exist "%WOT_PATH%\python.log" (
     echo    OK: python.log existe
     echo    Taille: 
@@ -51,7 +42,7 @@ if exist "%WOT_PATH%\python.log" (
 )
 
 echo.
-echo [4] Verification de la structure...
+echo [3] Verification de la structure...
 echo    Attendu:
 echo    %WOT_PATH%\res_mods\%WOT_VERSION%\scripts\client\gui\mods\mod_battle_data_collector\__init__.py
 if exist "%TARGET_DIR%\__init__.py" (

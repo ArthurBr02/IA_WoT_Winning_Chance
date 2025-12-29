@@ -11,7 +11,7 @@ REM Détecter la version de WoT
 set WOT_PATH=C:\Games\World_of_Tanks_EU
 set WOT_VERSION=2.1.0.5208
 
-echo [1/5] Verification de l'installation WoT...
+echo [1/4] Verification de l'installation WoT...
 if not exist "%WOT_PATH%" (
     echo ERREUR: World of Tanks non trouve dans %WOT_PATH%
     echo Veuillez modifier WOT_PATH dans ce script
@@ -22,7 +22,7 @@ echo    OK: WoT trouve dans %WOT_PATH%
 
 REM Créer le dossier mods/<version> s'il n'existe pas
 echo.
-echo [2/5] Creation du dossier mods\%WOT_VERSION%...
+echo [2/4] Creation du dossier mods\%WOT_VERSION%...
 if not exist "%WOT_PATH%\mods\%WOT_VERSION%" (
     mkdir "%WOT_PATH%\mods\%WOT_VERSION%"
     echo    OK: Dossier cree
@@ -32,7 +32,7 @@ if not exist "%WOT_PATH%\mods\%WOT_VERSION%" (
 
 REM Vérifier que le fichier .wotmod existe
 echo.
-echo [3/5] Verification du fichier .wotmod...
+echo [3/4] Verification du fichier .wotmod...
 if not exist "mod_battle_data_collector_1.0.0.wotmod" (
     echo ERREUR: Fichier .wotmod non trouve
     echo Executez d'abord: python build.py
@@ -43,7 +43,7 @@ echo    OK: Fichier .wotmod trouve
 
 REM Copier le fichier .wotmod
 echo.
-echo [4/5] Installation du mod...
+echo [4/4] Installation du mod...
 copy /Y "mod_battle_data_collector_1.0.0.wotmod" "%WOT_PATH%\mods\%WOT_VERSION%\"
 if errorlevel 1 (
     echo ERREUR: Impossible de copier le fichier
@@ -52,27 +52,6 @@ if errorlevel 1 (
 )
 echo    OK: Mod installe
 
-REM Vérifier la configuration
-echo.
-echo [5/5] Verification de la configuration...
-if not exist ".env" (
-    echo ATTENTION: Fichier .env non trouve
-    echo Copiez .env.example en .env et configurez votre cle API
-    echo.
-    echo Voulez-vous creer .env maintenant? (O/N)
-    choice /C ON /N
-    if errorlevel 2 goto skip_env
-    if errorlevel 1 (
-        copy ".env.example" ".env"
-        echo    OK: Fichier .env cree
-        echo    IMPORTANT: Editez .env et ajoutez votre cle API Wargaming
-        notepad .env
-    )
-) else (
-    echo    OK: Fichier .env existe
-)
-
-:skip_env
 echo.
 echo ============================================================
 echo INSTALLATION TERMINEE
@@ -82,9 +61,11 @@ echo Fichier installe dans:
 echo   %WOT_PATH%\mods\%WOT_VERSION%\mod_battle_data_collector_1.0.0.wotmod
 echo.
 echo PROCHAINES ETAPES:
-echo   1. Configurez votre cle API dans .env
-echo   2. Lancez World of Tanks
-echo   3. Verifiez python.log pour:
+echo   1. Lancez l'API locale (dossier api/) avant WoT
+echo   2. (Si besoin) Editez la config du mod dans:
+echo      res_mods\scripts\client\gui\mods\battle_data_collector\config.py
+echo   3. Lancez World of Tanks
+echo   4. Verifiez python.log pour:
 echo      [BattleDataCollector] Mod charge avec succes
 echo.
 echo Les donnees seront exportees dans:

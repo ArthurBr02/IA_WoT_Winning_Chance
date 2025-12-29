@@ -45,30 +45,14 @@
 
 ### Étape 3: Configuration (1 min)
 
-**Option A: Fichier .env (Recommandé - Plus sécurisé)**
-
-1. Copiez le fichier exemple:
-   ```bash
-   copy .env.example .env
-   ```
-
-2. Éditez le fichier `.env`:
-   ```env
-   INTERNAL_API_BASE_URL=http://127.0.0.1:8000/api
-   SERVER_REGION=eu
-   COLLECT_PLAYER_STATS=true
-   ```
-
-3. Sauvegardez (le fichier `.env` est ignoré par Git pour votre sécurité)
-
-**Option B: Édition directe de config.py**
-
 1. Ouvrez le fichier:
    ```
-   res_mods/scripts/client/gui/mods/mod_battle_data_collector/config.py
+   res_mods/scripts/client/gui/mods/battle_data_collector/config.py
    ```
-
-2. Les valeurs par défaut seront utilisées si `.env` n'existe pas
+2. Ajustez au besoin:
+   - `API_BASE_URL` (API locale)
+   - `SERVER_REGION`
+   - `COLLECT_PLAYER_STATS`
 
 ### Étape 4: Test (1 min)
 
@@ -108,7 +92,7 @@ Ouvrez le fichier JSON et vérifiez qu'il contient:
 | Problème | Solution |
 |----------|----------|
 | Mod ne se charge pas | Vérifiez le chemin d'installation |
-| Pas de stats | Vérifiez que l'API locale tourne et que `INTERNAL_API_BASE_URL` est correct |
+| Pas de stats | Vérifiez que l'API locale tourne et que `API_BASE_URL` est correct |
 | Fichier JSON vide | Consultez `python.log` pour les erreurs |
 | Erreur API | Vérifiez la config `api/.env` (WARGAMING_APP_ID) |
 

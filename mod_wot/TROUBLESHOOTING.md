@@ -93,25 +93,17 @@ C:\Games\World_of_Tanks_EU\python.log
 
 ## ⚠️ Le mod se charge mais ne collecte pas de données
 
-### Vérification 1: Configuration de la clé API
+### Vérification 1: API locale démarrée
 
-Le fichier `.env` doit être à la racine du projet:
-```
-u:\Projets\Git\IA_WoT_Winning_Chance\mod_wot\.env
-```
-
-**Contenu minimal:**
-```env
-WARGAMING_API_KEY=votre_clé_api_ici
-SERVER_REGION=eu
-```
+Le mod appelle uniquement l'API locale (proxy). Assurez-vous que :
+- l'API locale tourne (uvicorn)
+- la clé Wargaming est configurée côté serveur (`api/.env`)
 
 ### Vérification 2: Logs dans python.log
 
 Cherchez ces messages:
 ```
 [BattleDataCollector] Mod chargé avec succès - v1.0.0
-[BattleDataCollector] Variables d'environnement chargées depuis: ...
 [BattleDataCollector] Collecteur initialisé
 ```
 
@@ -166,27 +158,15 @@ C:\Games\World_of_Tanks_EU\battle_data\
 2. Relancez `python build.py`
 3. Vérifiez la structure avec 7-Zip
 
-### Erreur: "KeyError: 'WARGAMING_API_KEY'"
-
-**Cause:** Fichier `.env` manquant ou mal placé
-
-**Solution:**
-1. Copiez `.env.example` en `.env`
-2. Éditez `.env` et configurez `INTERNAL_API_BASE_URL`
-3. Le fichier `.env` doit être à la racine WoT (recommandé) ou accessible depuis le dossier courant
-
 ### Erreur: "API timeout" ou "Connection error"
 
 **Cause:** Problème de connexion à l'API locale (proxy) ou à l'upstream
 
 **Solution:**
 1. Vérifiez que l'API locale tourne (uvicorn)
-2. Vérifiez `INTERNAL_API_BASE_URL` dans `.env`
+2. Vérifiez `API_BASE_URL` dans `res_mods/scripts/client/gui/mods/battle_data_collector/config.py`
 3. Vérifiez `WARGAMING_APP_ID` dans `api/.env`
-3. Augmentez `API_TIMEOUT` dans `.env`:
-   ```env
-   API_TIMEOUT=10
-   ```
+4. Augmentez `API_TIMEOUT` dans `config.py` si nécessaire
 
 ### Aucun fichier JSON n'est créé
 
@@ -214,9 +194,8 @@ python build.py
 # 2. Copier
 copy mod_battle_data_collector_1.0.0.wotmod "C:\Games\World_of_Tanks_EU\mods\2.1.0.2\"
 
-# 3. Configurer
-copy .env.example .env
-notepad .env  # Ajoutez votre clé API
+# 3. Configurer (si besoin)
+# Editez: res_mods/scripts/client/gui/mods/battle_data_collector/config.py
 
 # (nouvelle archi) Lancez l'API locale (dossier api/) avant WoT
 
@@ -286,9 +265,8 @@ python build.py
 # 4. Copier
 copy mod_battle_data_collector_1.0.0.wotmod "C:\Games\World_of_Tanks_EU\mods\2.1.0.2\"
 
-# 5. Configurer .env
-copy .env.example .env
-notepad .env
+# 5. Configurer le mod (si besoin)
+# Editez: res_mods/scripts/client/gui/mods/battle_data_collector/config.py
 
 # 6. Redémarrer WoT complètement
 ```
@@ -299,9 +277,9 @@ notepad .env
 
 ### Activer le mode debug
 
-Dans `.env`:
-```env
-DEBUG_MODE=true
+Dans `res_mods/scripts/client/gui/mods/battle_data_collector/config.py`:
+```python
+DEBUG_MODE = True
 ```
 
 Cela affichera plus d'informations dans `python.log`.
@@ -310,4 +288,4 @@ Cela affichera plus d'informations dans `python.log`.
 
 - **python.log:** `C:\Games\World_of_Tanks_EU\python.log`
 - **Données collectées:** `C:\Games\World_of_Tanks_EU\battle_data\`
-- **Fichier .env:** `u:\Projets\Git\IA_WoT_Winning_Chance\mod_wot\.env`
+- **Configuration du mod:** `res_mods/scripts/client/gui/mods/battle_data_collector/config.py`

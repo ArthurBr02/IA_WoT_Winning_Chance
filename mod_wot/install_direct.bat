@@ -10,7 +10,7 @@ echo.
 set WOT_PATH=C:\Games\World_of_Tanks_EU
 set WOT_VERSION=2.1.0.2
 
-echo [1/4] Verification de WoT...
+echo [1/3] Verification de WoT...
 if not exist "%WOT_PATH%" (
     echo ERREUR: WoT non trouve
     pause
@@ -19,7 +19,7 @@ if not exist "%WOT_PATH%" (
 echo    OK: %WOT_PATH%
 
 echo.
-echo [2/4] Creation de la structure res_mods...
+echo [2/3] Creation de la structure res_mods...
 set TARGET_DIR=%WOT_PATH%\res_mods\%WOT_VERSION%\scripts\client\gui\mods\battle_data_collector
 
 if not exist "%TARGET_DIR%" (
@@ -30,7 +30,7 @@ if not exist "%TARGET_DIR%" (
 )
 
 echo.
-echo [3/4] Copie des fichiers Python...
+echo [3/3] Copie des fichiers Python...
 set SOURCE_DIR=res_mods\scripts\client\gui\mods\battle_data_collector
 
 if not exist "%SOURCE_DIR%" (
@@ -48,20 +48,6 @@ if errorlevel 1 (
 echo    OK: Fichiers copies
 
 echo.
-echo [4/4] Copie du fichier .env...
-if exist ".env" (
-    copy /Y ".env" "%WOT_PATH%\"
-    echo    OK: .env copie
-) else (
-    echo    ATTENTION: .env non trouve
-    if exist ".env.example" (
-        copy ".env.example" "%WOT_PATH%\.env"
-        echo    OK: .env.example copie en .env
-        echo    IMPORTANT: Editez %WOT_PATH%\.env
-    )
-)
-
-echo.
 echo ============================================================
 echo INSTALLATION TERMINEE
 echo ============================================================
@@ -69,12 +55,10 @@ echo.
 echo Fichiers installes dans:
 echo   %TARGET_DIR%
 echo.
-echo Fichier .env:
-echo   %WOT_PATH%\.env
-echo.
 echo PROCHAINES ETAPES:
-echo   1. Editez %WOT_PATH%\.env
-echo   2. Ajoutez votre cle API Wargaming
+echo   1. (Si besoin) Editez la config du mod dans:
+echo      %TARGET_DIR%\config.py
+echo   2. Lancez l'API locale (dossier api/) avant WoT
 echo   3. Lancez World of Tanks
 echo   4. Verifiez python.log
 echo.

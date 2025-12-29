@@ -27,21 +27,18 @@ Créer un mod qui extrait automatiquement les données suivantes au début de ch
 - `README.md` - Documentation complète
 - `INSTALLATION.md` - Guide d'installation rapide
 - `.gitignore` - Exclusions Git
-- `.env` - Configuration environnement (à personnaliser)
-- `.env.example` - Exemple de configuration
 - `example_output.json` - Exemple de sortie
-- `res_mods/scripts/client/gui/mods/mod_battle_data_collector/`:
+- `res_mods/scripts/client/gui/mods/battle_data_collector/`:
   - `__init__.py` - Point d'entrée
-  - `config.py` - Configuration (charge depuis .env)
-  - `config.example.py` - Exemple de configuration
-  - `env_loader.py` - Chargeur de variables d'environnement
+  - `config.py` - Configuration (définie dans le fichier)
+  - `env_loader.py` - Utilitaires (ex: détection dossier WoT)
   - `battle_data_collector.py` - Collecteur principal
   - `stats_fetcher.py` - Récupération stats API
   - `data_exporter.py` - Export JSON
 
 ## Prochaines Étapes
 1. Obtenir une clé API Wargaming sur https://developers.wargaming.net/
-2. Copier `.env.example` en `.env` et configurer votre clé API
+2. Configurer la clé Wargaming côté API locale (`api/.env`)
 3. Tester le mod dans World of Tanks
 4. Vérifier les fichiers JSON générés dans `<WoT>/battle_data/`
 

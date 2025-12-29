@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """Configuration du mod Battle Data Collector.
 
-Ce mod est exécuté dans le runtime BigWorld (Python 2.7). Pour simplifier le
-déploiement et éviter les fichiers externes, la configuration est définie ici
-directement (sans chargement de fichier `.env`).
+Ce mod est exécuté dans le runtime BigWorld (Python 2.7). La configuration est
+définie directement ici (pas de fichier .env).
 """
 
 # ============================================================================
@@ -12,6 +11,12 @@ directement (sans chargement de fichier `.env`).
 # Tous les appels externes (Wargaming + Tomato) passent par l'API locale.
 # Exemple: http://127.0.0.1:8000/api
 API_BASE_URL = 'http://127.0.0.1:8000/api'
+
+# Alias conservé pour compatibilité (anciens noms)
+INTERNAL_API_BASE_URL = API_BASE_URL
+
+# Réservé (si vous protégez l'API locale côté serveur)
+INTERNAL_API_KEY = ''
 
 # ============================================================================
 # RÉGION DU SERVEUR
@@ -28,6 +33,15 @@ API_URLS = {
 }
 
 # ============================================================================
+# API TOMATO.GG (WN8/WNX + stats globales)
+# ============================================================================
+# Base URL de l'API Tomato (publique). Conservé pour compat/diagnostic.
+TOMATO_API_BASE_URL = 'https://api.tomato.gg/api'
+
+# Serveur Tomato (souvent identique à SERVER_REGION)
+TOMATO_SERVER = SERVER_REGION
+
+# ============================================================================
 # PARAMÈTRES D'EXPORT
 # ============================================================================
 # Chemin de sortie des données (relatif au dossier WoT)
@@ -39,7 +53,13 @@ OUTPUT_DIR = 'battle_data'
 # Timeout pour les requêtes API (secondes)
 API_TIMEOUT = 5
 
-# Stats à collecter
+# ============================================================================
+# COLLECTE DES STATISTIQUES
+# ============================================================================
+# Activer/désactiver la collecte de stats
+COLLECT_PLAYER_STATS = True
+
+# Stats à collecter (WG)
 STATS_FIELDS = [
     'battles',
     'wins',
@@ -51,10 +71,6 @@ STATS_FIELDS = [
     'capture_points',
     'dropped_capture_points',
     'xp',
-    # NOTE: ces champs ne sont pas disponibles sur tous les serveurs/versions
-    # de l'API WoT. On les calcule à 0 si absents.
-    # 'damage_assisted_track',
-    # 'damage_assisted_radio'
 ]
 
 # ============================================================================
