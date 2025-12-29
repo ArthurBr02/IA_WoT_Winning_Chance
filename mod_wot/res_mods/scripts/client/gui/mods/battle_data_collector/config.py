@@ -47,11 +47,17 @@ TOMATO_SERVER = SERVER_REGION
 # Chemin de sortie des données (relatif au dossier WoT)
 OUTPUT_DIR = 'battle_data'
 
+# Export des fichiers JSON (désactivé quand on veut uniquement la prédiction)
+EXPORT_BATTLE_DATA = False
+
 # ============================================================================
 # PARAMÈTRES API
 # ============================================================================
 # Timeout pour les requêtes API (secondes)
 API_TIMEOUT = 5
+
+# Timeout spécifique pour la prédiction (l'API peut appeler WG + Tomato, donc plus long)
+PREDICTION_TIMEOUT = 30
 
 # ============================================================================
 # COLLECTE DES STATISTIQUES

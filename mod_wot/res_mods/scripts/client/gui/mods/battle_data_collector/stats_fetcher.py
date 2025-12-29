@@ -27,7 +27,7 @@ class StatsFetcher(object):
         self._cache = {}  # Cache pour éviter les requêtes multiples
         self._tomato_cache = {}  # Cache Tomato (account_id -> data)
 
-    def _api_get(self, endpoint, params):
+    def _api_get(self, endpoint, params, timeout=None):
         """GET helper compatible Python 2.7 vers l'API locale."""
         if not self.api_base_url:
             raise Exception('API_BASE_URL non configure')
@@ -44,7 +44,10 @@ class StatsFetcher(object):
 
         req = urllib2.Request(url)
 
-        response = urllib2.urlopen(req, timeout=config.API_TIMEOUT)
+        if timeout is None:
+            timeout = getattr(config, 'API_TIMEOUT', 5)
+
+        response = urllib2.urlopen(req, timeout=timeout)
         return json.loads(response.read())
 
     def _safe_utf8(self, value):
@@ -149,7 +152,8 @@ class StatsFetcher(object):
                 'spawn_2': self._safe_utf8(','.join([self._safe_utf8(n) for n in team2])),
             }
 
-            result = self._api_get('predict/win', params)
+            pred_timeout = getattr(config, 'PREDICTION_TIMEOUT', getattr(config, 'API_TIMEOUT', 5))
+            result = self._api_get('predict/win', params, timeout=pred_timeout)
 
             # L'API renvoie un bool JSON -> bool Python
             print('[BattleDataCollector] Prediction victoire pour {} (spawn {}): {}'.format(user_name, user_spawn, str(result)))

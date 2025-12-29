@@ -24,10 +24,16 @@ class BattleDataCollector(object):
         print("[BattleDataCollector] Construction du collecteur...")
         
         try:
-            self.exporter = DataExporter()
-            print("[BattleDataCollector] DataExporter initialise")
+            self.exporter = None
+            if getattr(config, 'EXPORT_BATTLE_DATA', True):
+                self.exporter = DataExporter()
+                print("[BattleDataCollector] DataExporter initialise")
+            else:
+                print("[BattleDataCollector] Export JSON desactive")
             
-            self.stats_fetcher = StatsFetcher() if config.COLLECT_PLAYER_STATS else None
+            self.stats_fetcher = None
+            if config.COLLECT_PLAYER_STATS or getattr(config, 'COLLECT_PREDICTION', False):
+                self.stats_fetcher = StatsFetcher()
             if self.stats_fetcher:
                 print("[BattleDataCollector] StatsFetcher initialise")
             else:
@@ -129,8 +135,9 @@ class BattleDataCollector(object):
                 self._pendingStats = True
                 self.stats_fetcher.fetch_player_stats_async(player_names, self._onStatsReceived)
             else:
-                # Exporter directement sans stats
-                self.exporter.export(self._battleData)
+                # Exporter directement sans stats (si activé)
+                if self.exporter:
+                    self.exporter.export(self._battleData)
 
         except Exception as e:
             print("[BattleDataCollector] Erreur _collectBattleDataWithRetry: {}".format(str(e)))
@@ -334,8 +341,9 @@ class BattleDataCollector(object):
             except Exception:
                 pass
             
-            # Exporter les données complètes
-            self.exporter.export(self._battleData)
+            # Exporter les données complètes (si activé)
+            if self.exporter:
+                self.exporter.export(self._battleData)
             self._pendingStats = False
         
         except Exception as e:
