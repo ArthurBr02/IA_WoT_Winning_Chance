@@ -32,5 +32,24 @@ Ces routes existent pour que **chaque appel externe du mod** passe par l'API.
   - `GET http://127.0.0.1:8000/api/tomato/player/overall/<server>/<account_id>`
   - Exemple: `.../overall/eu/123456789`
 
+- Prédiction — booléen "victoire utilisateur":
+  - `GET http://127.0.0.1:8000/api/predict/win?user=MonPseudo&user_spawn=1&map_id=1&spawn_1=a,b,c&spawn_2=d,e,f&region=eu`
+  - `POST http://127.0.0.1:8000/api/predict/win?region=eu` avec body JSON:
+    - `{ "user": "MonPseudo", "user_spawn": 2, "map_id": 1, "spawn_1": ["a"], "spawn_2": ["b"] }`
+  - Si `spawn_1/spawn_2` ne sont pas fournis, l'API peut fallback sur `pseudos` (30 pseudos) et découper 15/15.
+
+- Prédiction — features (objet complet pour IA):
+  - `GET http://127.0.0.1:8000/api/predict/features?user=MonPseudo&user_spawn=1&map_id=1&spawn_1=a,b,c&spawn_2=d,e,f&region=eu`
+  - `POST http://127.0.0.1:8000/api/predict/features?region=eu` avec body JSON:
+    - `{ "user": "MonPseudo", "user_spawn": 2, "map_id": 1, "spawn_1": ["a"], "spawn_2": ["b"] }`
+  - La réponse contient `players` (par pseudo) avec `account_id` + `stats` (incluant `tomato_overall` et les champs `overallWN8`, `winrate`, `dpg`, etc.).
+
+## Modèle PyTorch (ml/)
+- L'API charge les artefacts d'inférence depuis `../ml/` par défaut:
+  - `ml/wot_model_map.pth` (state_dict)
+  - `ml/scaler.pkl` (StandardScaler)
+  - `ml/map_index.pkl` (mapping map_id -> index embedding)
+- Variables d'env optionnelles: `MODEL_PATH`, `SCALER_PATH`, `MAP_INDEX_PATH`.
+
 ### Auth
 Pas d'authentification interne: l'API est prévue pour être utilisée localement.

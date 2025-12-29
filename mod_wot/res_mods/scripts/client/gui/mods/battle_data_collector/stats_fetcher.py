@@ -13,6 +13,11 @@ try:
 except Exception:
     import config
 
+try:
+    import BigWorld
+except Exception:
+    BigWorld = None
+
 
 class StatsFetcher(object):
     """Récupère les statistiques des joueurs via l'API locale (proxy)."""
@@ -41,6 +46,118 @@ class StatsFetcher(object):
 
         response = urllib2.urlopen(req, timeout=config.API_TIMEOUT)
         return json.loads(response.read())
+
+    def _safe_utf8(self, value):
+        try:
+            if isinstance(value, unicode):
+                return value.encode('utf-8')
+        except Exception:
+            pass
+        try:
+            return str(value)
+        except Exception:
+            return value
+
+    def _try_get_current_player_name(self):
+        try:
+            if BigWorld is None:
+                return None
+            p = BigWorld.player()
+            if p is None:
+                return None
+            name = getattr(p, 'name', None)
+            if name:
+                return name
+        except Exception:
+            pass
+        return None
+
+    def _try_get_current_map_id(self):
+        try:
+            if BigWorld is None:
+                return None
+            p = BigWorld.player()
+            if p is None:
+                return None
+            arena = getattr(p, 'arena', None)
+            if arena is None:
+                return None
+            arenaType = getattr(arena, 'arenaType', None)
+            if arenaType is None:
+                return None
+            map_id = getattr(arenaType, 'id', None)
+            if map_id is not None:
+                return int(map_id)
+        except Exception:
+            pass
+        return None
+
+    def _split_teams_from_player_names(self, player_names):
+        """player_names est attendu dans l'ordre: spawn_1 puis spawn_2 (cf BattleDataCollector._getAllPlayerNames)."""
+        try:
+            names = [n for n in (player_names or []) if n]
+        except Exception:
+            names = []
+
+        # Cas standard: 30 joueurs -> 15/15
+        if len(names) >= 30:
+            return names[:15], names[15:30]
+
+        # Fallback: split au milieu
+        mid = int(len(names) / 2)
+        return names[:mid], names[mid:]
+
+    def predict_win_and_print(self, player_names, user_name=None, user_spawn=None, map_id=None):
+        """Appelle l'API locale pour prédire la victoire et affiche le résultat."""
+        try:
+            # Auto-détection contexte si pas fourni
+            if not user_name:
+                user_name = self._try_get_current_player_name()
+            if map_id is None:
+                map_id = self._try_get_current_map_id()
+
+            team1, team2 = self._split_teams_from_player_names(player_names)
+
+            if not user_name:
+                print('[BattleDataCollector] Prediction: utilisateur inconnu (BigWorld.player().name indisponible)')
+                return None
+            if map_id is None:
+                print('[BattleDataCollector] Prediction: map_id indisponible (arenaType.id)')
+                return None
+
+            # Déterminer le spawn utilisateur si absent
+            if user_spawn is None:
+                try:
+                    if user_name in team1:
+                        user_spawn = 1
+                    elif user_name in team2:
+                        user_spawn = 2
+                except Exception:
+                    user_spawn = None
+
+            if user_spawn not in (1, 2):
+                print('[BattleDataCollector] Prediction: user_spawn invalide pour {} ({})'.format(user_name, user_spawn))
+                return None
+
+            region = getattr(config, 'SERVER_REGION', 'eu')
+            params = {
+                'user': self._safe_utf8(user_name),
+                'user_spawn': int(user_spawn),
+                'map_id': int(map_id),
+                'region': self._safe_utf8(region),
+                'spawn_1': self._safe_utf8(','.join([self._safe_utf8(n) for n in team1])),
+                'spawn_2': self._safe_utf8(','.join([self._safe_utf8(n) for n in team2])),
+            }
+
+            result = self._api_get('predict/win', params)
+
+            # L'API renvoie un bool JSON -> bool Python
+            print('[BattleDataCollector] Prediction victoire pour {} (spawn {}): {}'.format(user_name, user_spawn, str(result)))
+            return result
+
+        except Exception as e:
+            print('[BattleDataCollector] Prediction API error: {}'.format(str(e)))
+            return None
 
     def _tomato_get_overall(self, server, account_id):
         """Récupère les stats overall via Tomato.gg.
@@ -221,6 +338,12 @@ class StatsFetcher(object):
             
             # Étape 2: Récupérer les statistiques pour ces IDs
             stats = self._get_player_stats(account_ids)
+
+            # Étape 3: Prédire la victoire via l'API locale (et afficher le résultat)
+            try:
+                self.predict_win_and_print(player_names)
+            except Exception:
+                pass
             
             # Callback avec les résultats
             if callback:
