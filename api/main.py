@@ -12,6 +12,7 @@ import httpx
 from fastapi import Body, FastAPI, HTTPException, Query
 from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import json
 
 
 class Settings(BaseSettings):
@@ -382,7 +383,24 @@ async def _resolve_account_ids_via_wg_route(pseudos: List[str], region: str) -> 
         return {}, missing
 
     if not isinstance(resp, dict) or resp.get("status") != "ok":
-        raise HTTPException(status_code=502, detail="WG account/list proxy returned error")
+        # Dégradation contrôlée: si WG renvoie une erreur (ex: app_id invalide / rate-limit),
+        # on continue la prédiction avec des vecteurs à zéro.
+        try:
+            status = resp.get("status") if isinstance(resp, dict) else None
+            err = resp.get("error") if isinstance(resp, dict) else None
+        except Exception:
+            status = None
+            err = None
+
+        logger.warning(
+            "WG account/list returned error status=%s error=%s region=%s search_count=%d",
+            str(status),
+            str(err),
+            str(region),
+            len(normalized),
+        )
+        missing = {name: "wg_error_response" for name in normalized}
+        return {}, missing
 
     candidates = resp.get("data") or []
     by_name: Dict[str, Dict[str, Any]] = {}
@@ -652,21 +670,57 @@ async def predict_win_post(
     payload: PredictWinRequestWithPlayers = Body(...),
     region: Optional[str] = Query(None, description="Région WG/Tomato: eu|na|ru|asia (défaut: settings)"),
 ) -> bool:
-    if payload.map_id is None:
-        raise HTTPException(status_code=400, detail="map_id is required for model inference")
+    # Log du body (pour réplication). Ne contient que pseudos/spawns/map => safe.
+    try:
+        body = payload.model_dump(mode="json")
+        logger.info(
+            "predict_win_request region=%s body=%s",
+            str(region or settings.wargaming_region or "eu"),
+            json.dumps(body, ensure_ascii=False, sort_keys=True),
+        )
+    except Exception:
+        pass
 
-    team1, team2 = _split_teams_from_request(payload)
-    features = await _build_prediction_features_from_request(payload, region=region, map_id=payload.map_id)
-    predicted = await _predict_win_from_features(
-        map_id=int(payload.map_id),
-        user_spawn=payload.user_spawn,
-        user=payload.user,
-        team1_names=team1,
-        team2_names=team2,
-        features=features,
-    )
-    logger.info("predict_win_result user=%s predicted=%s", payload.user, str(predicted))
-    return predicted
+    try:
+        if payload.map_id is None:
+            raise HTTPException(status_code=400, detail="map_id is required for model inference")
+
+        team1, team2 = _split_teams_from_request(payload)
+        features = await _build_prediction_features_from_request(payload, region=region, map_id=payload.map_id)
+        predicted = await _predict_win_from_features(
+            map_id=int(payload.map_id),
+            user_spawn=payload.user_spawn,
+            user=payload.user,
+            team1_names=team1,
+            team2_names=team2,
+            features=features,
+        )
+        logger.info("predict_win_result user=%s predicted=%s", payload.user, str(predicted))
+        return predicted
+    except HTTPException as e:
+        try:
+            body = payload.model_dump(mode="json")
+            logger.warning(
+                "predict_win_error status=%d detail=%s region=%s body=%s",
+                int(e.status_code),
+                str(e.detail),
+                str(region or settings.wargaming_region or "eu"),
+                json.dumps(body, ensure_ascii=False, sort_keys=True),
+            )
+        except Exception:
+            pass
+        raise
+    except Exception:
+        try:
+            body = payload.model_dump(mode="json")
+            logger.exception(
+                "predict_win_unhandled_error region=%s body=%s",
+                str(region or settings.wargaming_region or "eu"),
+                json.dumps(body, ensure_ascii=False, sort_keys=True),
+            )
+        except Exception:
+            logger.exception("predict_win_unhandled_error (failed to dump body)")
+        raise HTTPException(status_code=500, detail="Internal prediction error")
 
 
 @app.get(f"{settings.api_prefix}/predict/features", response_model=PredictFeaturesResponse)

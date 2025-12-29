@@ -184,6 +184,15 @@ class StatsFetcher(object):
                             [{'name': self._safe_utf8(n), 'spawn': 2} for n in team2])
             }
 
+            # Log du body pour pouvoir répliquer la requête côté curl/Postman.
+            try:
+                print('[BattleDataCollector] Prediction body: {}'.format(json.dumps(payload)))
+            except Exception:
+                try:
+                    print('[BattleDataCollector] Prediction body (repr): {}'.format(repr(payload)))
+                except Exception:
+                    pass
+
             result = self._api_post('predict/win', {'region': self._safe_utf8(region)}, payload, timeout=pred_timeout)
 
             # L'API renvoie un bool JSON -> bool Python
