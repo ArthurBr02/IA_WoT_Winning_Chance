@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import asyncio
 import hashlib
 from pathlib import Path
+import logging
 
 import httpx
 from fastapi import Body, FastAPI, HTTPException, Query
@@ -40,6 +41,8 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+logger = logging.getLogger("api")
 
 app = FastAPI(title=settings.api_title)
 
@@ -261,6 +264,7 @@ async def _get_artifacts() -> _Artifacts:
             import torch
             import joblib
         except Exception as e:
+            logger.exception("ML imports failed (torch/joblib missing?)")
             raise HTTPException(
                 status_code=503,
                 detail=f"ML dependencies missing in API env: {e}. Install torch + joblib + scikit-learn + numpy.",
@@ -282,6 +286,7 @@ async def _get_artifacts() -> _Artifacts:
 
         map_index = joblib.load(str(map_index_path))
         if not isinstance(map_index, dict) or len(map_index) < 1:
+            logger.error("map_index.pkl invalid: %s", str(map_index_path))
             raise HTTPException(status_code=500, detail="map_index.pkl is invalid")
 
         # Convertit clés en int (csv 'map' est numérique)
@@ -300,8 +305,13 @@ async def _get_artifacts() -> _Artifacts:
         num_maps = max(map_index_int.values()) + 1
         model = _make_model(num_maps=num_maps, stats_input_size=stats_dim)
 
-        state = torch.load(str(model_path), map_location="cpu")
+        try:
+            state = torch.load(str(model_path), map_location="cpu")
+        except Exception as e:
+            logger.exception("torch.load failed for model: %s", str(model_path))
+            raise HTTPException(status_code=500, detail=f"Failed to load model file: {e}")
         if not isinstance(state, dict):
+            logger.error("Model file is not a state_dict: %s", str(model_path))
             raise HTTPException(status_code=500, detail="wot_model_map.pth is not a state_dict")
         model.load_state_dict(state)
         model.eval()
@@ -511,12 +521,14 @@ async def _predict_win_from_features(
         import numpy as np
         import torch
     except Exception as e:
+        logger.exception("ML imports failed (numpy/torch missing?)")
         raise HTTPException(status_code=503, detail=f"ML dependencies missing in API env: {e}")
 
     x_np = np.asarray([x_stats], dtype=np.float32)
     try:
         x_scaled = artifacts.scaler.transform(x_np)
     except Exception as e:
+        logger.exception("Scaler transform failed")
         raise HTTPException(status_code=500, detail=f"Scaler transform failed: {e}")
 
     x_tensor = torch.tensor(x_scaled, dtype=torch.float32)
