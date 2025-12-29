@@ -74,19 +74,18 @@ SHOW_PREDICTION_ON_SCREEN = True
 # Préfixe du message affiché (chat/toast)
 PREDICTION_MESSAGE_PREFIX = '[IA]'
 
-# Stats à collecter (WG)
-STATS_FIELDS = [
-    'battles',
-    'wins',
-    'losses',
-    'damage_dealt',
-    'frags',
-    'survived_battles',
-    'spotted',
-    'capture_points',
-    'dropped_capture_points',
-    'xp',
-]
+# Overlay persistant en bataille (texte haut-droite)
+SHOW_PREDICTION_OVERLAY = True
+
+# Texte affiché avant d'avoir la réponse API
+PREDICTION_OVERLAY_PENDING_TEXT = 'Prediction: ...'
+
+# Taille du texte (1.0 = normal)
+PREDICTION_OVERLAY_SCALE = 2.0
+
+# Position de l'overlay (x, y) en coordonnées normalisées (approx).
+# Valeur par défaut: haut-droite.
+PREDICTION_OVERLAY_POS = (0.99, 0.95)
 
 # ============================================================================
 # OPTIONS AVANCÉES

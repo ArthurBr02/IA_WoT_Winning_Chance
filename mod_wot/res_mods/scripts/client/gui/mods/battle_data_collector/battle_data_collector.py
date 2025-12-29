@@ -8,6 +8,12 @@ import json
 from datetime import datetime
 from PlayerEvents import g_playerEvents
 try:
+    import GUI
+except Exception:
+    GUI = None
+
+unicode = globals().get('unicode', str)
+try:
     from .data_exporter import DataExporter
     from .stats_fetcher import StatsFetcher
     from . import config
@@ -42,6 +48,10 @@ class BattleDataCollector(object):
             self._battleData = None
             self._pendingStats = False
             self._collectCallbackPending = False
+
+            self._predictionOverlay = None
+            self._predictionOverlayInitPending = False
+            self._predictionOverlayInitAttempts = 0
             
             self._registerEvents()
             print("[BattleDataCollector] Collecteur initialise avec succes")
@@ -79,6 +89,15 @@ class BattleDataCollector(object):
                 return
             
             print("[BattleDataCollector] Début de collecte des données")
+
+            # Overlay persistant (haut-droite) visible pendant toute la bataille
+            try:
+                if getattr(config, 'SHOW_PREDICTION_OVERLAY', True):
+                    pending = getattr(config, 'PREDICTION_OVERLAY_PENDING_TEXT', 'Prediction: ...')
+                    # L'UI peut ne pas être prête immédiatement: on tente + retry.
+                    self._ensurePredictionOverlay(text=pending, retries=25, delay=0.2)
+            except Exception:
+                pass
 
             # La liste des véhicules peut être vide juste après l'événement.
             # On réessaie quelques fois avec un délai court.
@@ -143,7 +162,7 @@ class BattleDataCollector(object):
                             print('[BattleDataCollector] Prediction request: spawn_1={} spawn_2={}'.format(len(team1_names), len(team2_names)))
                         except Exception:
                             pass
-                        self.stats_fetcher.fetch_prediction_async(team1_names, team2_names)
+                        self.stats_fetcher.fetch_prediction_async(team1_names, team2_names, callback=self._onPredictionReceived)
             except Exception:
                 pass
             # Récupérer les statistiques des joueurs si activé
@@ -160,25 +179,37 @@ class BattleDataCollector(object):
             print("[BattleDataCollector] Erreur _collectBattleDataWithRetry: {}".format(str(e)))
 
     def _onPredictionReceived(self, prediction):
-        """Callback de prédiction: affiche un message en jeu (thread-safe)."""
+        """Callback de prédiction: met à jour l'overlay + affiche un toast (thread-safe)."""
         try:
-            if not getattr(config, 'SHOW_PREDICTION_ON_SCREEN', True):
-                return
+            def _format_message():
+                prefix = getattr(config, 'PREDICTION_MESSAGE_PREFIX', '[IA]')
+                if prediction is True:
+                    return u"{} Prediction: Victoire".format(prefix), 'info'
+                if prediction is False:
+                    return u"{} Prediction: Defaite".format(prefix), 'warning'
+                return u"{} Prediction: indisponible".format(prefix), 'warning'
 
             def _show():
                 try:
-                    prefix = getattr(config, 'PREDICTION_MESSAGE_PREFIX', '[IA]')
+                    msg, msg_type = _format_message()
 
-                    # prediction est attendu bool (True/False) ou None
-                    if prediction is True:
-                        msg = u"{} Prédiction: Victoire".format(prefix)
-                        msg_type = 'info'
-                    elif prediction is False:
-                        msg = u"{} Prédiction: Défaite".format(prefix)
-                        msg_type = 'warning'
-                    else:
-                        msg = u"{} Prédiction: indisponible".format(prefix)
-                        msg_type = 'warning'
+                    # Overlay persistant (haut-droite)
+                    try:
+                        if getattr(config, 'SHOW_PREDICTION_OVERLAY', True):
+                            # Overlay sans préfixe si on préfère un affichage compact
+                            if prediction is True:
+                                overlay_text = u"Prediction: Victoire"
+                            elif prediction is False:
+                                overlay_text = u"Prediction: Defaite"
+                            else:
+                                overlay_text = u"Prediction: indisponible"
+                            self._setPredictionOverlayText(overlay_text)
+                    except Exception:
+                        pass
+
+                    # Toast / log (optionnel)
+                    if not getattr(config, 'SHOW_PREDICTION_ON_SCREEN', True):
+                        return
 
                     # Essayer SystemMessages (toast/centre écran). Fallback: log.
                     try:
@@ -208,6 +239,134 @@ class BattleDataCollector(object):
 
         except Exception:
             pass
+
+    def _setPredictionOverlayText(self, text):
+        """Crée/maj un overlay texte en haut-droite (GUI.Text) pendant la bataille."""
+        if GUI is None:
+            return
+
+        # S'assure que l'overlay existe (sans spam) puis met à jour le texte.
+        self._ensurePredictionOverlay(text=text, retries=0, delay=0.0)
+
+    def _ensurePredictionOverlay(self, text=None, retries=0, delay=0.2):
+        """Crée l'overlay si nécessaire, avec retry (UI pas prête au début)."""
+        if GUI is None:
+            return
+
+        def _apply():
+            created = False
+            try:
+                if self._predictionOverlay is None:
+                    t = GUI.Text(u"")
+
+                    # Ancrages si supportés (important: éviter que le texte déborde à droite)
+                    try:
+                        t.horizontalAnchor = 'RIGHT'
+                    except Exception:
+                        pass
+                    try:
+                        t.verticalAnchor = 'TOP'
+                    except Exception:
+                        pass
+
+                    # Position (haut-droite par défaut)
+                    try:
+                        pos = getattr(config, 'PREDICTION_OVERLAY_POS', (0.99, 0.95))
+                        t.position = (float(pos[0]), float(pos[1]), 0.0)
+                    except Exception:
+                        try:
+                            t.position = (0.99, 0.95, 0.0)
+                        except Exception:
+                            pass
+
+                    # Taille (scale)
+                    try:
+                        s = float(getattr(config, 'PREDICTION_OVERLAY_SCALE', 1.6))
+                        t.scale = (s, s, 1.0)
+                    except Exception:
+                        pass
+
+                    # Couleur + font si supportés
+                    try:
+                        t.colour = (255, 255, 255, 255)
+                    except Exception:
+                        pass
+                    try:
+                        t.font = 'system_small.font'
+                    except Exception:
+                        pass
+
+                    # Ajout au root (si disponible)
+                    add_root = getattr(GUI, 'addRoot', None)
+                    if add_root is None:
+                        raise Exception('GUI.addRoot indisponible')
+                    add_root(t)
+
+                    self._predictionOverlay = t
+                    created = True
+
+                if self._predictionOverlay is not None and text is not None:
+                    try:
+                        self._predictionOverlay.text = text
+                    except Exception:
+                        try:
+                            self._predictionOverlay.text = unicode(text)
+                        except Exception:
+                            pass
+
+            except Exception as e:
+                # UI pas prête / API GUI différente: retry limité
+                try:
+                    if getattr(config, 'DEBUG_MODE', False):
+                        print('[BattleDataCollector] Overlay init failed (attempt {}): {}'.format(self._predictionOverlayInitAttempts, str(e)))
+                except Exception:
+                    pass
+
+                if retries > 0 and not self._predictionOverlayInitPending:
+                    self._predictionOverlayInitPending = True
+
+                    def _retry():
+                        self._predictionOverlayInitPending = False
+                        self._predictionOverlayInitAttempts += 1
+                        self._ensurePredictionOverlay(text=text, retries=retries - 1, delay=delay)
+
+                    try:
+                        BigWorld.callback(delay, _retry)
+                    except Exception:
+                        _retry()
+                return
+
+            # reset state si créé
+            if created:
+                self._predictionOverlayInitPending = False
+            return
+
+        # Toujours côté thread BigWorld
+        try:
+            BigWorld.callback(0.0, _apply)
+        except Exception:
+            _apply()
+
+    def _destroyPredictionOverlay(self):
+        if GUI is None:
+            self._predictionOverlay = None
+            return
+
+        def _apply():
+            try:
+                if self._predictionOverlay is not None:
+                    try:
+                        GUI.delRoot(self._predictionOverlay)
+                    except Exception:
+                        pass
+                self._predictionOverlay = None
+            except Exception:
+                self._predictionOverlay = None
+
+        try:
+            BigWorld.callback(0.0, _apply)
+        except Exception:
+            _apply()
 
     def _defaultStats(self):
         # Schéma stable: toujours les mêmes clés
@@ -421,3 +580,7 @@ class BattleDataCollector(object):
         print("[BattleDataCollector] Fin de bataille")
         self._battleData = None
         self._pendingStats = False
+        try:
+            self._destroyPredictionOverlay()
+        except Exception:
+            pass
