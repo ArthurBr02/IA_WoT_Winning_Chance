@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import asyncio
 import hashlib
 from pathlib import Path
+import time
 import logging
 
 import httpx
@@ -471,7 +472,9 @@ async def _build_prediction_features_from_request(
     if not all_names:
         raise HTTPException(status_code=400, detail="No players provided (spawn_1/spawn_2/players/pseudos)")
 
+    t0 = time.perf_counter()
     features = await _build_prediction_features(all_names, payload.user_spawn, region)
+    dt_ms = int((time.perf_counter() - t0) * 1000)
     features.user = payload.user
     features.user_spawn = payload.user_spawn
 
@@ -485,6 +488,19 @@ async def _build_prediction_features_from_request(
         except HTTPException:
             features.map_index = 0
             features.map_unknown = True
+
+    logger.info(
+        "features_built user=%s user_spawn=%s map_id=%s region=%s teams=(%d,%d) resolved=%d missing=%d dt_ms=%d",
+        payload.user,
+        payload.user_spawn,
+        str(map_id) if map_id is not None else "None",
+        features.region,
+        len(team1),
+        len(team2),
+        len(features.players),
+        len(features.missing_players),
+        dt_ms,
+    )
 
     return features
 
@@ -542,7 +558,32 @@ async def _predict_win_from_features(
 
     # Le modèle est entraîné sur la cible "spawn_1 gagne" (cf ml/data CSV, target).
     prob_user = prob_spawn1 if user_spawn == 1 else (1.0 - prob_spawn1)
-    return bool(prob_user > 0.5)
+    predicted = bool(prob_user > 0.5)
+
+    logger.info(
+        "prediction user=%s user_spawn=%d map_id=%d map_unknown=%s teams=(%d,%d) resolved=%d missing=%d prob_spawn1=%.4f prob_user=%.4f predicted=%s",
+        user,
+        int(user_spawn),
+        int(map_id),
+        "1" if map_unknown else "0",
+        len(team1_names),
+        len(team2_names),
+        len(features.players),
+        len(features.missing_players),
+        float(prob_spawn1),
+        float(prob_user),
+        str(predicted),
+    )
+
+    # Si utile pour debug, afficher un aperçu des erreurs (limité)
+    if features.missing_players:
+        try:
+            items = list(features.missing_players.items())[:8]
+            logger.info("missing_players_sample=%s", str(items))
+        except Exception:
+            pass
+
+    return predicted
 
 
 @app.get(f"{settings.api_prefix}{settings.route_health}")

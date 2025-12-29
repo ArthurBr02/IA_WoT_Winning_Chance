@@ -116,14 +116,19 @@ class BattleDataCollector(object):
 
             player_names = self._getAllPlayerNames()
 
+            # Prédiction de victoire via l'API (ne récupère pas les stats côté mod)
+            try:
+                if getattr(config, 'COLLECT_PREDICTION', False) and self.stats_fetcher and player_names:
+                    self.stats_fetcher.fetch_prediction_async(player_names)
+            except Exception:
+                pass
+
             # Récupérer les statistiques des joueurs si activé
             if config.COLLECT_PLAYER_STATS and self.stats_fetcher and player_names:
                 print("[BattleDataCollector] Récupération stats pour {} joueurs".format(len(player_names)))
                 self._pendingStats = True
                 self.stats_fetcher.fetch_player_stats_async(player_names, self._onStatsReceived)
             else:
-                if config.COLLECT_PLAYER_STATS and self.stats_fetcher:
-                    print("[BattleDataCollector] Stats ignorées (0 joueur détecté)")
                 # Exporter directement sans stats
                 self.exporter.export(self._battleData)
 

@@ -57,7 +57,10 @@ API_TIMEOUT = 5
 # COLLECTE DES STATISTIQUES
 # ============================================================================
 # Activer/désactiver la collecte de stats
-COLLECT_PLAYER_STATS = True
+COLLECT_PLAYER_STATS = False
+
+# Prédiction de victoire via l'API locale (/predict/win)
+COLLECT_PREDICTION = True
 
 # Stats à collecter (WG)
 STATS_FIELDS = [

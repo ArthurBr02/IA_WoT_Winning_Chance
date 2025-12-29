@@ -329,17 +329,30 @@ class StatsFetcher(object):
         thread = Thread(target=self._fetch_stats_thread, args=(player_names, callback))
         thread.daemon = True
         thread.start()
+
+    def fetch_prediction_async(self, player_names, user_name=None, user_spawn=None, map_id=None, callback=None):
+        """Lance uniquement la prédiction (sans récupérer les stats) dans un thread."""
+        thread = Thread(target=self._fetch_prediction_thread, args=(player_names, user_name, user_spawn, map_id, callback))
+        thread.daemon = True
+        thread.start()
+
+    def _fetch_prediction_thread(self, player_names, user_name, user_spawn, map_id, callback):
+        try:
+            pred = self.predict_win_and_print(player_names, user_name=user_name, user_spawn=user_spawn, map_id=map_id)
+            if callback:
+                callback(pred)
+        except Exception as e:
+            print("[BattleDataCollector] Erreur prediction: {}".format(str(e)))
+            if callback:
+                callback(None)
     
     def _fetch_stats_thread(self, player_names, callback):
         """Thread de récupération des stats"""
         try:
-            # Étape 1: Récupérer les account_id à partir des noms
-            account_ids = self._get_account_ids(player_names)
-            
-            # Étape 2: Récupérer les statistiques pour ces IDs
-            stats = self._get_player_stats(account_ids)
+            # IMPORTANT: mode "prediction only".
+            # Le mod ne doit pas récupérer les stats (Tomato/WG) : l'API le fait côté serveur.
+            stats = {}
 
-            # Étape 3: Prédire la victoire via l'API locale (et afficher le résultat)
             try:
                 self.predict_win_and_print(player_names)
             except Exception:
