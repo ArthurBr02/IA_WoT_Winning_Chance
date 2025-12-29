@@ -10,7 +10,7 @@ définie directement ici (pas de fichier .env).
 # ============================================================================
 # Tous les appels externes (Wargaming + Tomato) passent par l'API locale.
 # Exemple: http://127.0.0.1:8000/api
-API_BASE_URL = 'http://127.0.0.1:8000/api'
+API_BASE_URL = 'https://maison.arthurbratigny.fr/api'
 
 # Alias conservé pour compatibilité (anciens noms)
 INTERNAL_API_BASE_URL = API_BASE_URL
