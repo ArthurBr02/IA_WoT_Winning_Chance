@@ -35,6 +35,14 @@ Ces routes existent pour que **chaque appel externe du mod** passe par l'API.
 - Prédiction — booléen "victoire utilisateur":
   - `GET http://127.0.0.1:8000/api/predict/win?user=MonPseudo&user_spawn=1&map_id=1&spawn_1=a,b,c&spawn_2=d,e,f&region=eu`
   - `POST http://127.0.0.1:8000/api/predict/win?region=eu` avec body JSON:
+
+  Réponse (GET/POST):
+  ```json
+  {
+    "predicted": true,
+    "prob_user": 63.4
+  }
+  ```
     - `{ "user": "MonPseudo", "user_spawn": 2, "map_id": 1, "spawn_1": ["a"], "spawn_2": ["b"] }`
   - Si `spawn_1/spawn_2` ne sont pas fournis, l'API peut fallback sur `pseudos` (30 pseudos) et découper 15/15.
 

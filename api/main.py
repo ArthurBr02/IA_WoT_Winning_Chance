@@ -135,6 +135,16 @@ class PredictFeaturesResponse(BaseModel):
     missing_players: Dict[str, str] = Field(default_factory=dict)
 
 
+class PredictWinResponse(BaseModel):
+    predicted: bool = Field(..., description="Prédiction binaire: True=victoire, False=défaite (pour l'utilisateur courant)")
+    prob_user: float = Field(
+        ...,
+        ge=0.0,
+        le=100.0,
+        description="Probabilité de victoire pour l'utilisateur courant, en pourcentage (0-100)",
+    )
+
+
 # Pydantic v2 + postponed annotations:
 # ensure all models are fully rebuilt before FastAPI uses them for request parsing.
 try:
@@ -142,6 +152,7 @@ try:
     PlayerWithSpawn.model_rebuild()
     PredictWinRequestWithPlayers.model_rebuild()
     PredictFeaturesResponse.model_rebuild()
+    PredictWinResponse.model_rebuild()
 except Exception:
     # Don't crash the app at import time; failing here would otherwise turn every request into a 500.
     pass
@@ -882,7 +893,7 @@ async def _predict_win_from_features(
     team1_names: List[str],
     team2_names: List[str],
     features: PredictFeaturesResponse,
-) -> bool:
+) -> PredictWinResponse:
     artifacts = await _get_artifacts()
 
     map_idx = artifacts.map_index.get(int(map_id))
@@ -950,6 +961,9 @@ async def _predict_win_from_features(
     prob_user = prob_spawn1 if user_spawn == 1 else (1.0 - prob_spawn1)
     predicted = bool(prob_user > 0.5)
 
+    # Exposer en pourcentage (0-100) pour le client (mod WoT).
+    prob_user_pct = float(prob_user * 100.0)
+
     logger.info(
         "prediction user=%s user_spawn=%d map_id=%d map_unknown=%s teams=(%d,%d) resolved=%d missing=%d prob_spawn1=%.4f prob_user=%.4f predicted=%s",
         user,
@@ -973,7 +987,7 @@ async def _predict_win_from_features(
         except Exception:
             pass
 
-    return predicted
+    return PredictWinResponse(predicted=predicted, prob_user=prob_user_pct)
 
 
 @app.get(f"{settings.api_prefix}{settings.route_health}")
@@ -981,7 +995,7 @@ def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get(f"{settings.api_prefix}/predict/win", response_model=bool)
+@app.get(f"{settings.api_prefix}/predict/win", response_model=PredictWinResponse)
 async def predict_win_get(
     user: str = Query(..., description="Pseudo utilisateur courant"),
     user_spawn: int = Query(..., ge=1, le=2, description="Spawn/équipe de l'utilisateur courant: 1 ou 2"),
@@ -990,7 +1004,7 @@ async def predict_win_get(
     spawn_1: Optional[str] = Query(None, description="Pseudos spawn_1 séparés par virgules"),
     spawn_2: Optional[str] = Query(None, description="Pseudos spawn_2 séparés par virgules"),
     pseudos: Optional[str] = Query(None, description="Fallback: 30 pseudos séparés par virgules (15/15)"),
-) -> bool:
+) -> PredictWinResponse:
     if map_id is None:
         raise HTTPException(status_code=400, detail="map_id is required for model inference")
 
@@ -1011,7 +1025,7 @@ async def predict_win_get(
     )
 
     features = await _build_prediction_features_from_request(payload, region=region, map_id=map_id)
-    predicted = await _predict_win_from_features(
+    result = await _predict_win_from_features(
         map_id=int(map_id),
         user_spawn=user_spawn,
         user=user,
@@ -1019,15 +1033,15 @@ async def predict_win_get(
         team2_names=team2,
         features=features,
     )
-    logger.info("predict_win_result user=%s predicted=%s", user, str(predicted))
-    return predicted
+    logger.info("predict_win_result user=%s predicted=%s prob_user_pct=%.2f", user, str(result.predicted), float(result.prob_user))
+    return result
 
 
-@app.post(f"{settings.api_prefix}/predict/win", response_model=bool)
+@app.post(f"{settings.api_prefix}/predict/win", response_model=PredictWinResponse)
 async def predict_win_post(
     payload: PredictWinRequestWithPlayers = Body(...),
     region: Optional[str] = Query(None, description="Région WG/Tomato: eu|na|ru|asia (défaut: settings)"),
-) -> bool:
+) -> PredictWinResponse:
     # Log du body (pour réplication). Ne contient que pseudos/spawns/map => safe.
     try:
         body = payload.model_dump(mode="json")
@@ -1045,7 +1059,7 @@ async def predict_win_post(
 
         team1, team2 = _split_teams_from_request(payload)
         features = await _build_prediction_features_from_request(payload, region=region, map_id=payload.map_id)
-        predicted = await _predict_win_from_features(
+        result = await _predict_win_from_features(
             map_id=int(payload.map_id),
             user_spawn=payload.user_spawn,
             user=payload.user,
@@ -1053,8 +1067,13 @@ async def predict_win_post(
             team2_names=team2,
             features=features,
         )
-        logger.info("predict_win_result user=%s predicted=%s", payload.user, str(predicted))
-        return predicted
+        logger.info(
+            "predict_win_result user=%s predicted=%s prob_user_pct=%.2f",
+            payload.user,
+            str(result.predicted),
+            float(result.prob_user),
+        )
+        return result
     except HTTPException as e:
         try:
             body = payload.model_dump(mode="json")

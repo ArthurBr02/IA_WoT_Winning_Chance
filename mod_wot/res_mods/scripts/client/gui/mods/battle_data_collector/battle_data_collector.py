@@ -181,12 +181,61 @@ class BattleDataCollector(object):
     def _onPredictionReceived(self, prediction):
         """Callback de prédiction: met à jour l'overlay + affiche un toast (thread-safe)."""
         try:
+            def _fmt_pct(value):
+                try:
+                    pct = float(value)
+                    if pct < 0.0:
+                        pct = 0.0
+                    if pct > 100.0:
+                        pct = 100.0
+                    # Affichage compact si quasi entier
+                    try:
+                        if abs(pct - round(pct)) < 0.01:
+                            return u"{}%".format(int(round(pct)))
+                    except Exception:
+                        pass
+                    return u"{:.1f}%".format(pct)
+                except Exception:
+                    return None
+
+            def _normalize_prediction(pred):
+                """Retourne (predicted_bool_or_None, pct_str_or_None)."""
+                if isinstance(pred, dict):
+                    try:
+                        predicted = pred.get('predicted')
+                    except Exception:
+                        predicted = None
+                    try:
+                        pct_str = _fmt_pct(pred.get('prob_user'))
+                    except Exception:
+                        pct_str = None
+
+                    # Si l'API ne renvoie pas predicted, déduire du %
+                    if predicted not in (True, False):
+                        try:
+                            v = float(pred.get('prob_user'))
+                            predicted = True if v > 50.0 else False
+                        except Exception:
+                            predicted = None
+                    return predicted, pct_str
+
+                # Ancien format: bool
+                if pred in (True, False):
+                    return pred, None
+                return None, None
+
+            predicted_bool, pct_str = _normalize_prediction(prediction)
+
             def _format_message():
                 prefix = getattr(config, 'PREDICTION_MESSAGE_PREFIX', '[IA]')
-                if prediction is True:
-                    return u"{} Prediction: Victoire".format(prefix), 'info'
-                if prediction is False:
-                    return u"{} Prediction: Defaite".format(prefix), 'warning'
+                if predicted_bool is True:
+                    if pct_str:
+                        return u"{} Prediction : Victoire ({})".format(prefix, pct_str), 'info'
+                    return u"{} Prediction : Victoire".format(prefix), 'info'
+                if predicted_bool is False:
+                    if pct_str:
+                        return u"{} Prediction : Defaite ({})".format(prefix, pct_str), 'warning'
+                    return u"{} Prediction : Defaite".format(prefix), 'warning'
                 return u"{} Prediction: indisponible".format(prefix), 'warning'
 
             def _show():
@@ -197,10 +246,14 @@ class BattleDataCollector(object):
                     try:
                         if getattr(config, 'SHOW_PREDICTION_OVERLAY', True):
                             # Overlay sans préfixe si on préfère un affichage compact
-                            if prediction is True:
-                                overlay_text = u"Prediction: Victoire"
-                            elif prediction is False:
-                                overlay_text = u"Prediction: Defaite"
+                            if predicted_bool is True:
+                                overlay_text = u"Prediction : Victoire"
+                                if pct_str:
+                                    overlay_text = u"{} ({})".format(overlay_text, pct_str)
+                            elif predicted_bool is False:
+                                overlay_text = u"Prediction : Defaite"
+                                if pct_str:
+                                    overlay_text = u"{} ({})".format(overlay_text, pct_str)
                             else:
                                 overlay_text = u"Prediction: indisponible"
                             self._setPredictionOverlayText(overlay_text)

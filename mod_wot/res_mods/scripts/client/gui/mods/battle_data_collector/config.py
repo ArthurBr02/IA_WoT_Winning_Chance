@@ -78,7 +78,7 @@ PREDICTION_MESSAGE_PREFIX = '[IA]'
 SHOW_PREDICTION_OVERLAY = True
 
 # Texte affiché avant d'avoir la réponse API
-PREDICTION_OVERLAY_PENDING_TEXT = 'Prediction: ...'
+PREDICTION_OVERLAY_PENDING_TEXT = 'Prediction : ...'
 
 # Taille du texte (1.0 = normal)
 PREDICTION_OVERLAY_SCALE = 2.0

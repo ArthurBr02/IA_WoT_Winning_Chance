@@ -195,7 +195,24 @@ class StatsFetcher(object):
 
             result = self._api_post('predict/win', {'region': self._safe_utf8(region)}, payload, timeout=pred_timeout)
 
-            # L'API renvoie un bool JSON -> bool Python
+            # Nouveau format API: {predicted: bool, prob_user: float(0-100)}
+            try:
+                if isinstance(result, dict):
+                    predicted = result.get('predicted')
+                    prob_user = result.get('prob_user')
+                    try:
+                        pct = float(prob_user)
+                        pct_str = '{:.1f}%'.format(pct)
+                    except Exception:
+                        pct_str = None
+                    print('[BattleDataCollector] Prediction: user={} spawn={} predicted={} prob_user={}'.format(
+                        user_name, int(user_spawn), str(predicted), pct_str or str(prob_user)
+                    ))
+                    return result
+            except Exception:
+                pass
+
+            # Ancien format (fallback): bool JSON -> bool Python
             print('[BattleDataCollector] Prediction victoire pour {} (spawn {}): {}'.format(user_name, user_spawn, str(result)))
             return result
 
