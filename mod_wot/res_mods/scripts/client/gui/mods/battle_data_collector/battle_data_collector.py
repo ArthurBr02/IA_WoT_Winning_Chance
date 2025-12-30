@@ -352,10 +352,22 @@ class BattleDataCollector(object):
                 pass
 
             try:
+                try:
+                    import Math
+                except Exception:
+                    Math = None
+
                 overlay = gui.Text(self._overlayLastText)
 
-                # Font
-                for font_id in ('system_large.font', 'system_medium.font', 'default_large.font', 'default_medium.font'):
+                # Font (pour le "gras", on essaye des fonts plus grosses/bold en premier)
+                try:
+                    candidates = getattr(config, 'GUI_TEXT_FONT_CANDIDATES', None)
+                except Exception:
+                    candidates = None
+                if not candidates:
+                    candidates = ['system_big.font', 'system_large.font', 'default_large.font', 'system_medium.font', 'default_medium.font']
+
+                for font_id in candidates:
                     try:
                         overlay.font = font_id
                         break
@@ -368,38 +380,35 @@ class BattleDataCollector(object):
                 except Exception:
                     pass
 
-                # Ancrage + position
-                try:
-                    overlay.horizontalAnchor = 'RIGHT'
-                except Exception:
-                    pass
-                try:
-                    overlay.verticalAnchor = 'TOP'
-                except Exception:
-                    pass
+                # Anchors (certains clients attendent des constantes, pas des strings)
+                def _set_anchor(attr_name, string_value, const_names):
+                    # 1) constante sur la classe Text
+                    for const_name in const_names:
+                        try:
+                            const_val = getattr(getattr(gui, 'Text', None), const_name, None)
+                            if const_val is not None:
+                                setattr(overlay, attr_name, const_val)
+                                return True
+                        except Exception:
+                            pass
+                    # 2) constante sur le module GUI
+                    for const_name in const_names:
+                        try:
+                            const_val = getattr(gui, const_name, None)
+                            if const_val is not None:
+                                setattr(overlay, attr_name, const_val)
+                                return True
+                        except Exception:
+                            pass
+                    # 3) string (fallback)
+                    try:
+                        setattr(overlay, attr_name, string_value)
+                        return True
+                    except Exception:
+                        return False
 
-                w, h = _get_screen_size()
-                # Beaucoup de clients WoT utilisent un repère en pixels centré (0,0 au centre).
-                # On vise "haut-droite" avec un padding.
-                if w and h:
-                    x = float((w / 2) - 40)
-                    y = float((-h / 2) + 40)
-                    try:
-                        overlay.position = (x, y)
-                    except Exception:
-                        try:
-                            overlay.position = (x, y, 0.0)
-                        except Exception:
-                            pass
-                else:
-                    # Fallback: coords normalisées si supportées
-                    try:
-                        overlay.position = (0.98, 0.02)
-                    except Exception:
-                        try:
-                            overlay.position = (0.98, 0.02, 0.0)
-                        except Exception:
-                            pass
+                _set_anchor('horizontalAnchor', 'RIGHT', ['HA_RIGHT', 'HORIZONTAL_ANCHOR_RIGHT', 'ANCHOR_RIGHT'])
+                _set_anchor('verticalAnchor', 'TOP', ['VA_TOP', 'VERTICAL_ANCHOR_TOP', 'ANCHOR_TOP'])
 
                 # Scale (si supporté)
                 try:
@@ -415,7 +424,189 @@ class BattleDataCollector(object):
                 except Exception:
                     pass
 
+                # Position: on essaye plusieurs modes car les clients WoT varient.
+                w, h = _get_screen_size()
+                try:
+                    margin = getattr(config, 'GUI_TEXT_MARGIN_PX', (40, 40))
+                    mx = float(margin[0])
+                    my = float(margin[1])
+                except Exception:
+                    mx, my = 40.0, 40.0
+
+                try:
+                    y_offset = float(getattr(config, 'GUI_TEXT_Y_OFFSET_PX', -30.0))
+                except Exception:
+                    y_offset = -30.0
+
+                try:
+                    pos_mode = getattr(config, 'GUI_TEXT_POS_MODE', 'pixel_center')
+                except Exception:
+                    pos_mode = 'pixel_center'
+
+                def _safe_str(v):
+                    try:
+                        return str(v)
+                    except Exception:
+                        return '<unprintable>'
+
+                def _get_pos_snapshot():
+                    # Snapshot léger (pour diagnostiquer si la position "stick")
+                    try:
+                        p = overlay.position
+                    except Exception:
+                        p = None
+                    try:
+                        x = getattr(overlay, 'x', None)
+                    except Exception:
+                        x = None
+                    try:
+                        y = getattr(overlay, 'y', None)
+                    except Exception:
+                        y = None
+                    return (_safe_str(p), _safe_str(x), _safe_str(y))
+
+                def _set_pos(x, y, z=None):
+                    before = _get_pos_snapshot()
+
+                    # 1) position tuple
+                    try:
+                        overlay.position = (x, y) if z is None else (x, y, z)
+                    except Exception:
+                        pass
+
+                    # 2) Math.Vector2 / Vector3 (souvent requis)
+                    if Math is not None:
+                        try:
+                            if z is None and hasattr(Math, 'Vector2'):
+                                overlay.position = Math.Vector2(float(x), float(y))
+                        except Exception:
+                            pass
+                        try:
+                            if z is not None and hasattr(Math, 'Vector3'):
+                                overlay.position = Math.Vector3(float(x), float(y), float(z))
+                        except Exception:
+                            pass
+
+                    # 3) muter position.x/y si disponible
+                    try:
+                        p = getattr(overlay, 'position', None)
+                        if p is not None and hasattr(p, 'x') and hasattr(p, 'y'):
+                            try:
+                                p.x = float(x)
+                                p.y = float(y)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                    # 4) x/y attrs
+                    try:
+                        overlay.x = float(x)
+                        overlay.y = float(y)
+                    except Exception:
+                        pass
+
+                    # 5) setPosition method
+                    try:
+                        fn = getattr(overlay, 'setPosition', None)
+                        if callable(fn):
+                            fn(float(x), float(y))
+                    except Exception:
+                        pass
+
+                    after = _get_pos_snapshot()
+                    if before != after:
+                        return True, before, after
+                    return False, before, after
+
+                def _apply_position(tag):
+                    # Position: on essaye plusieurs modes car les clients WoT varient.
+                    w, h = _get_screen_size()
+                    try:
+                        margin = getattr(config, 'GUI_TEXT_MARGIN_PX', (40, 40))
+                        mx = float(margin[0])
+                        my = float(margin[1])
+                    except Exception:
+                        mx, my = 40.0, 40.0
+
+                    try:
+                        y_offset = float(getattr(config, 'GUI_TEXT_Y_OFFSET_PX', -30.0))
+                    except Exception:
+                        y_offset = -30.0
+
+                    try:
+                        x_offset = float(getattr(config, 'GUI_TEXT_X_OFFSET_PX', 0.0))
+                    except Exception:
+                        x_offset = 0.0
+
+                    try:
+                        pos_mode = getattr(config, 'GUI_TEXT_POS_MODE', 'pixel_center')
+                    except Exception:
+                        pos_mode = 'pixel_center'
+
+                    # on prépare une liste de positions candidates: mode préféré d'abord, puis fallbacks
+                    candidates = []
+
+                    py = my + y_offset
+
+                    if w and h:
+                        # A) pixel centre (repère centré)
+                        x_c = float((w / 2.0) - mx + x_offset)
+                        y_c = float((-h / 2.0) + py)
+                        # B) pixel top-left
+                        x_tl = float(w - mx + x_offset)
+                        y_tl = float(py)
+                        # C) normalisé 0..1 (top-right = (1,0))
+                        x_n01 = float(1.0 - (mx / float(w)) + (x_offset / float(w)))
+                        y_n01 = float(max(0.0, py) / float(h))
+                        # D) normalisé -1..1 (top-right = (1,-1) ou (1,1) selon clients)
+                        x_n11 = float(1.0 - (2.0 * mx / float(w)) + (2.0 * x_offset / float(w)))
+                        y_n11_top = float(-1.0 + (2.0 * max(0.0, py) / float(h)))
+                        y_n11_top_alt = float(1.0 - (2.0 * max(0.0, py) / float(h)))
+                    else:
+                        x_c, y_c = 0.0, 0.0
+                        x_tl, y_tl = 0.0, 0.0
+                        x_n01, y_n01 = 0.98, 0.02
+                        x_n11, y_n11_top, y_n11_top_alt = 0.98, -0.98, 0.98
+
+                    if pos_mode == 'pixel_topleft':
+                        candidates.append(('pixel_topleft', x_tl, y_tl))
+                    elif pos_mode == 'normalized':
+                        candidates.append(('normalized01', x_n01, y_n01))
+                    else:
+                        candidates.append(('pixel_center', x_c, y_c))
+
+                    # fallbacks (on tente plusieurs repères)
+                    candidates.extend([
+                        ('normalized01', x_n01, y_n01),
+                        ('normalized11_a', x_n11, y_n11_top),
+                        ('normalized11_b', x_n11, y_n11_top_alt),
+                        ('pixel_center', x_c, y_c),
+                        ('pixel_topleft', x_tl, y_tl),
+                    ])
+
+                    last_before = None
+                    last_after = None
+                    for mode_name, x, y in candidates:
+                        ok, before, after = _set_pos(x, y)
+                        last_before, last_after = before, after
+                        if ok:
+                            print('[BattleDataCollector] GUI.Text pos {} {} => {} (mode={}, phase={})'.format(mode_name, before, after, pos_mode, tag))
+                            return True
+
+                    print('[BattleDataCollector] GUI.Text pos inchangée (phase={}): {} => {}'.format(tag, last_before, last_after))
+                    return False
+
+                # Essayer avant addRoot
+                _apply_position('preRoot')
+
+                # Ajouter au root: certains clients n'appliquent correctement position/anchors
+                # qu'une fois l'objet attaché.
                 gui.addRoot(overlay)
+
+                # Re-appliquer après addRoot
+                _apply_position('postRoot')
+
                 self._predictionOverlay = overlay
                 print("[BattleDataCollector] GUI.Text overlay OK (tentative {})".format(self._overlayInitAttempts))
                 return

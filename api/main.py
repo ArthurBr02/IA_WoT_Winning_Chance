@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     # --- Tomato proxy (dedicated routes)
     tomato_api_base_url: str = "https://api.tomato.gg/api"
 
+    # Cache Tomato (évite de spammer l'API upstream)
+    # - success: 24h par joueur (exigence: 1 requête/jour/joueur)
+    # - error: plus court pour éviter de figer une panne transitoire toute une journée
+    tomato_cache_ttl_seconds: int = 86400
+    tomato_cache_error_ttl_seconds: int = 3600
+    # Chemin relatif au dossier de ce fichier si non absolu.
+    tomato_cache_file: str = ".cache/tomato_cache.json"
+
     # --- ML artifacts (trained in ../ml)
     model_path: str = Field(default="", validation_alias=AliasChoices("MODEL_PATH"))
     scaler_path: str = Field(default="", validation_alias=AliasChoices("SCALER_PATH"))
@@ -48,6 +56,174 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+_TOMATO_CACHE_LOCK = asyncio.Lock()
+_TOMATO_CACHE_LOADED = False
+_TOMATO_CACHE: Dict[str, Dict[str, Any]] = {}
+_TOMATO_INFLIGHT: Dict[str, asyncio.Task] = {}
+
+
+def _tomato_cache_key(server: str, account_id: int) -> str:
+    return f"{(server or '').lower()}:{int(account_id)}"
+
+
+def _tomato_cache_path() -> Path:
+    p = Path(settings.tomato_cache_file)
+    if p.is_absolute():
+        return p
+    return (Path(__file__).resolve().parent / p).resolve()
+
+
+def _tomato_cache_entry_is_valid(entry: Dict[str, Any], now_s: float) -> bool:
+    try:
+        ts = float(entry.get("ts") or 0)
+        ok = bool(entry.get("ok"))
+    except Exception:
+        return False
+
+    ttl = settings.tomato_cache_ttl_seconds if ok else settings.tomato_cache_error_ttl_seconds
+    if ttl <= 0:
+        return False
+    return (now_s - ts) < float(ttl)
+
+
+async def _tomato_cache_load_if_needed() -> None:
+    global _TOMATO_CACHE_LOADED
+
+    async with _TOMATO_CACHE_LOCK:
+        if _TOMATO_CACHE_LOADED:
+            return
+
+        path = _tomato_cache_path()
+        try:
+            if path.exists():
+                raw = path.read_text(encoding="utf-8")
+                data = json.loads(raw) if raw else {}
+                if isinstance(data, dict):
+                    _TOMATO_CACHE.clear()
+                    for k, v in data.items():
+                        if isinstance(k, str) and isinstance(v, dict):
+                            _TOMATO_CACHE[k] = v
+        except Exception as e:
+            # Cache corrompu ou non lisible: on repart proprement.
+            logger.warning("Tomato cache load failed path=%s err=%s", str(path), str(e))
+            _TOMATO_CACHE.clear()
+
+        _TOMATO_CACHE_LOADED = True
+
+
+def _tomato_cache_prune_inplace(now_s: float) -> None:
+    # Supprime les entrées expirées. Appel sous lock.
+    expired = []
+    for k, entry in _TOMATO_CACHE.items():
+        if not isinstance(entry, dict) or not _tomato_cache_entry_is_valid(entry, now_s):
+            expired.append(k)
+    for k in expired:
+        _TOMATO_CACHE.pop(k, None)
+
+
+async def _tomato_cache_persist_snapshot(snapshot: Dict[str, Dict[str, Any]]) -> None:
+    path = _tomato_cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except Exception as e:
+        logger.warning("Tomato cache persist failed path=%s err=%s", str(path), str(e))
+
+
+async def _tomato_get_overall_cached(server: str, account_id: int) -> Any:
+    await _tomato_cache_load_if_needed()
+    key = _tomato_cache_key(server, account_id)
+    now_s = time.time()
+
+    # 1) cache hit ou attente sur une requête en cours
+    created_task = False
+    task: Optional[asyncio.Task] = None
+    async with _TOMATO_CACHE_LOCK:
+        _tomato_cache_prune_inplace(now_s)
+        entry = _TOMATO_CACHE.get(key)
+        if isinstance(entry, dict) and _tomato_cache_entry_is_valid(entry, now_s):
+            if entry.get("ok"):
+                return entry.get("payload")
+            err = entry.get("error") or {}
+            raise HTTPException(status_code=int(err.get("status_code") or 502), detail=err.get("detail") or "Tomato cached error")
+
+        task = _TOMATO_INFLIGHT.get(key)
+        if task is None:
+            # Lancer une unique requête upstream pour ce joueur.
+            task = asyncio.create_task(_tomato_fetch_overall_upstream(server=server, account_id=int(account_id)))
+            _TOMATO_INFLIGHT[key] = task
+            created_task = True
+
+    # 2) on attend la requête (créée par nous ou déjà en cours)
+    try:
+        payload = await task  # type: ignore[misc]
+    except HTTPException as e:
+        # Cache des erreurs (TTL court) pour éviter de spammer Tomato pendant une panne.
+        if created_task:
+            async with _TOMATO_CACHE_LOCK:
+                _TOMATO_CACHE[key] = {
+                    "ts": now_s,
+                    "ok": False,
+                    "error": {"status_code": int(e.status_code), "detail": e.detail},
+                }
+                _TOMATO_INFLIGHT.pop(key, None)
+                snapshot = dict(_TOMATO_CACHE)
+            await _tomato_cache_persist_snapshot(snapshot)
+        raise
+    except Exception as e:
+        if created_task:
+            async with _TOMATO_CACHE_LOCK:
+                _TOMATO_CACHE[key] = {
+                    "ts": now_s,
+                    "ok": False,
+                    "error": {"status_code": 502, "detail": f"Upstream Tomato request failed: {e}"},
+                }
+                _TOMATO_INFLIGHT.pop(key, None)
+                snapshot = dict(_TOMATO_CACHE)
+            await _tomato_cache_persist_snapshot(snapshot)
+        raise
+    else:
+        if created_task:
+            async with _TOMATO_CACHE_LOCK:
+                _TOMATO_CACHE[key] = {"ts": now_s, "ok": True, "payload": payload}
+                _TOMATO_INFLIGHT.pop(key, None)
+                snapshot = dict(_TOMATO_CACHE)
+            await _tomato_cache_persist_snapshot(snapshot)
+        return payload
+
+
+async def _tomato_fetch_overall_upstream(server: str, account_id: int) -> Any:
+    base = (settings.tomato_api_base_url or "").rstrip("/")
+    if not base:
+        raise HTTPException(status_code=500, detail="TOMATO_API_BASE_URL is not configured")
+
+    target_url = f"{base}/player/overall/{server}/{account_id}"
+    timeout = httpx.Timeout(settings.http_timeout_seconds)
+
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        try:
+            resp = await client.get(target_url)
+        except httpx.RequestError as exc:
+            logger.exception("Upstream Tomato request failed url=%s", target_url)
+            raise HTTPException(status_code=502, detail=f"Upstream Tomato request failed: {exc}") from exc
+
+    # Ne pas considérer 4xx/5xx upstream comme un "success". On renvoie une 502.
+    if resp.status_code < 200 or resp.status_code >= 300:
+        try:
+            detail = resp.text
+        except Exception:
+            detail = ""
+        raise HTTPException(status_code=502, detail=f"Upstream Tomato returned HTTP {resp.status_code}: {detail}")
+
+    try:
+        return resp.json()
+    except ValueError:
+        logger.error("Upstream Tomato returned non-JSON url=%s status=%s", target_url, str(resp.status_code))
+        raise HTTPException(status_code=502, detail="Upstream Tomato returned non-JSON")
 
 # Ensure logs appear under uvicorn (which configures handlers) and also when running directly.
 # Uvicorn may set loggers to WARNING depending on its config; we force our logger level via LOG_LEVEL.
@@ -1197,23 +1373,6 @@ async def tomato_player_overall(
     account_id: int,
 ) -> Any:
     """Proxy dédié: Tomato.gg `player/overall/{server}/{account_id}`."""
-
-    base = (settings.tomato_api_base_url or "").rstrip("/")
-    if not base:
-        raise HTTPException(status_code=500, detail="TOMATO_API_BASE_URL is not configured")
-
-    target_url = f"{base}/player/overall/{server}/{account_id}"
-    timeout = httpx.Timeout(settings.http_timeout_seconds)
-
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        try:
-            resp = await client.get(target_url)
-        except httpx.RequestError as exc:
-            logger.exception("Upstream Tomato request failed url=%s", target_url)
-            raise HTTPException(status_code=502, detail=f"Upstream Tomato request failed: {exc}") from exc
-
-    try:
-        return resp.json()
-    except ValueError:
-        logger.error("Upstream Tomato returned non-JSON url=%s status=%s", target_url, str(resp.status_code))
-        raise HTTPException(status_code=502, detail="Upstream Tomato returned non-JSON")
+    # Cache 24h + déduplication: si 10 requêtes arrivent pour le même joueur,
+    # une seule part chez Tomato et les autres attendent le résultat.
+    return await _tomato_get_overall_cached(server=server, account_id=int(account_id))

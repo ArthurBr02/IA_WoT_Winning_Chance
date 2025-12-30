@@ -13,6 +13,12 @@ pip install -r requirements.txt
 - Copie/édite `.env` (un exemple est fourni dans `.env.example`).
 - Les routes et clés se configurent via variables d’environnement.
 
+Variables utiles (Tomato):
+- `TOMATO_API_BASE_URL` (défaut: `https://api.tomato.gg/api`)
+- `TOMATO_CACHE_TTL_SECONDS` (défaut: `86400`) — cache success 24h par joueur
+- `TOMATO_CACHE_ERROR_TTL_SECONDS` (défaut: `3600`) — cache erreur (évite de spammer en cas de panne)
+- `TOMATO_CACHE_FILE` (défaut: `.cache/tomato_cache.json`) — cache persistant (créé automatiquement)
+
 ## Lancer le serveur
 ```bash
 uvicorn main:app --reload --port 8000

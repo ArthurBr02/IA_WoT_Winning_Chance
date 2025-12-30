@@ -81,6 +81,30 @@ SEND_PREDICTION_TO_CHAT = True
 # Préfixe du message affiché
 PREDICTION_MESSAGE_PREFIX = '[IA]'
 
+# GUI.Text: décalage vertical en pixels (négatif = plus haut)
+GUI_TEXT_Y_OFFSET_PX = -30.0
+
+# GUI.Text: décalage horizontal en pixels (négatif = plus à gauche)
+GUI_TEXT_X_OFFSET_PX = -200.0
+
+# GUI.Text: positionnement
+# - 'pixel_center': repère pixels avec origine au centre (le plus fréquent)
+# - 'pixel_topleft': repère pixels avec origine en haut-gauche
+# - 'normalized': repère normalisé (0..1)
+GUI_TEXT_POS_MODE = 'pixel_center'
+
+# Marges (px) depuis le coin haut-droite (x, y)
+GUI_TEXT_MARGIN_PX = (40, 40)
+
+# Fonts essayées (la 1ère qui marche est utilisée). Mets ta police "bold" en premier.
+GUI_TEXT_FONT_CANDIDATES = [
+    'system_big.font',
+    'system_large.font',
+    'default_large.font',
+    'system_medium.font',
+    'default_medium.font',
+]
+
 # Intervalle de réaffichage de la prédiction (secondes)
 PREDICTION_DISPLAY_INTERVAL = 20.0
 
