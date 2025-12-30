@@ -42,6 +42,16 @@ java {
     }
 }
 
+jar {
+    manifest {
+        attributes 'Main-Class': 'fr.arthurbr02.Main'
+    }
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 application {
     // Define the main class for the application.
     mainClass = 'fr.arthurbr02.Main'

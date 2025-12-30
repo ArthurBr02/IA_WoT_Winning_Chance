@@ -7,9 +7,12 @@ import hashlib
 from pathlib import Path
 import time
 import logging
+import os
 
 import httpx
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import json
@@ -46,9 +49,35 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-logger = logging.getLogger("api")
+# Ensure logs appear under uvicorn (which configures handlers) and also when running directly.
+# Uvicorn may set loggers to WARNING depending on its config; we force our logger level via LOG_LEVEL.
+_LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=_LOG_LEVEL,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+for _name in ("uvicorn.error", "uvicorn.access", "wot_api"):
+    logging.getLogger(_name).setLevel(_LOG_LEVEL)
+
+logger = logging.getLogger("wot_api")
 
 app = FastAPI(title=settings.api_title)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    req_id = hashlib.sha1(f"{time.time_ns()}-{request.url}".encode("utf-8")).hexdigest()[:12]
+    logger.warning("request_validation_error id=%s url=%s errors=%s", req_id, str(request.url), str(exc.errors()))
+    return JSONResponse(status_code=422, content={"detail": exc.errors(), "request_id": req_id})
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    req_id = hashlib.sha1(f"{time.time_ns()}-{request.url}".encode("utf-8")).hexdigest()[:12]
+    logger.exception("unhandled_exception id=%s url=%s", req_id, str(request.url))
+    return JSONResponse(status_code=500, content={"detail": "Internal Server Error", "request_id": req_id})
 
 
 WG_BASE_URLS: Dict[str, str] = {
@@ -106,6 +135,18 @@ class PredictFeaturesResponse(BaseModel):
     missing_players: Dict[str, str] = Field(default_factory=dict)
 
 
+# Pydantic v2 + postponed annotations:
+# ensure all models are fully rebuilt before FastAPI uses them for request parsing.
+try:
+    PredictWinRequest.model_rebuild()
+    PlayerWithSpawn.model_rebuild()
+    PredictWinRequestWithPlayers.model_rebuild()
+    PredictFeaturesResponse.model_rebuild()
+except Exception:
+    # Don't crash the app at import time; failing here would otherwise turn every request into a 500.
+    pass
+
+
 FEATURE_COLS: Tuple[str, ...] = (
     "battles",
     "overallWN8",
@@ -122,7 +163,18 @@ FEATURE_COLS: Tuple[str, ...] = (
     "kd",
 )
 MAX_PLAYERS: int = 15
-MAP_EMBEDDING_DIM: int = 10
+# Must match ml/main.py (current training uses MAP_EMBEDDING_DIM = 16)
+MAP_EMBEDDING_DIM: int = 16
+
+# Must match ml/main.py
+GLOBAL_FEATURES: Tuple[str, ...] = (
+    "delta_mean_wn8",
+    "delta_mean_wr",
+    "delta_top3_wn8",
+    "delta_sum_battles",
+    "delta_mean_dpg",
+    "delta_mean_xp",
+)
 
 
 def _normalize_pseudos(pseudos: List[str]) -> List[str]:
@@ -183,6 +235,51 @@ def _safe_float(value: Any) -> float:
         return 0.0
 
 
+def _safe_mean(values: List[float]) -> float:
+    if not values:
+        return 0.0
+    return float(sum(values) / max(1, len(values)))
+
+
+def _safe_topk_mean(values: List[float], k: int) -> float:
+    if not values:
+        return 0.0
+    return float(sum(values[:k]) / max(1, min(k, len(values))))
+
+
+def _compute_global_features(team1_stats: List[Dict[str, Any]], team2_stats: List[Dict[str, Any]]) -> List[float]:
+    """Compute engineered global features for a match: (team1 - team2).
+
+    Mirrors ml/main.py::compute_global_features.
+    """
+    t1_wn8 = sorted([_safe_float(p.get("overallWN8")) for p in team1_stats], reverse=True)
+    t2_wn8 = sorted([_safe_float(p.get("overallWN8")) for p in team2_stats], reverse=True)
+
+    delta_mean_wn8 = _safe_mean(t1_wn8) - _safe_mean(t2_wn8)
+    delta_mean_wr = _safe_mean([_safe_float(p.get("winrate")) for p in team1_stats]) - _safe_mean(
+        [_safe_float(p.get("winrate")) for p in team2_stats]
+    )
+    delta_top3_wn8 = _safe_topk_mean(t1_wn8, 3) - _safe_topk_mean(t2_wn8, 3)
+    delta_sum_battles = sum([_safe_float(p.get("battles")) for p in team1_stats]) - sum(
+        [_safe_float(p.get("battles")) for p in team2_stats]
+    )
+    delta_mean_dpg = _safe_mean([_safe_float(p.get("dpg")) for p in team1_stats]) - _safe_mean(
+        [_safe_float(p.get("dpg")) for p in team2_stats]
+    )
+    delta_mean_xp = _safe_mean([_safe_float(p.get("xp")) for p in team1_stats]) - _safe_mean(
+        [_safe_float(p.get("xp")) for p in team2_stats]
+    )
+
+    return [
+        float(delta_mean_wn8),
+        float(delta_mean_wr),
+        float(delta_top3_wn8),
+        float(delta_sum_battles),
+        float(delta_mean_dpg),
+        float(delta_mean_xp),
+    ]
+
+
 def _get_padded_team_vector(team_stats: List[Dict[str, Any]]) -> List[float]:
     # Tri desc sur overallWN8 (comme ml/main.py)
     sorted_team = sorted(team_stats, key=lambda d: _safe_float(d.get("overallWN8")), reverse=True)
@@ -200,6 +297,17 @@ def _get_padded_team_vector(team_stats: List[Dict[str, Any]]) -> List[float]:
     return flat
 
 
+def _get_padded_team_matrix(team_stats: List[Dict[str, Any]]) -> List[List[float]]:
+    """Return (MAX_PLAYERS, num_features) sorted + padded (matches ml/main.py)."""
+    sorted_team = sorted(team_stats, key=lambda d: _safe_float(d.get("overallWN8")), reverse=True)
+    rows: List[List[float]] = []
+    for p in sorted_team[:MAX_PLAYERS]:
+        rows.append([_safe_float(p.get(col)) for col in FEATURE_COLS])
+    while len(rows) < MAX_PLAYERS:
+        rows.append([0.0] * len(FEATURE_COLS))
+    return rows
+
+
 def _resolve_artifact_path(*candidates: str) -> Path:
     base_dir = Path(__file__).resolve().parent
     for cand in candidates:
@@ -210,27 +318,207 @@ def _resolve_artifact_path(*candidates: str) -> Path:
             p = (base_dir / p).resolve()
         if p.exists():
             return p
-    raise FileNotFoundError("No valid artifact path found among candidates")
+    raise FileNotFoundError(f"No valid artifact path found among candidates: {candidates}")
 
 
 class _Artifacts:
-    def __init__(self, model: Any, scaler: Any, map_index: Dict[int, int]):
+    def __init__(
+        self,
+        model: Any,
+        players_scaler: Any,
+        global_scaler: Any,
+        global_features: Tuple[str, ...],
+        map_index: Dict[int, int],
+        model_type: str,
+    ):
         self.model = model
-        self.scaler = scaler
+        self.players_scaler = players_scaler
+        self.global_scaler = global_scaler
+        self.global_features = global_features
         self.map_index = map_index
+        self.model_type = model_type
+
+
+def _infer_model_type_from_state_dict(state: Dict[str, Any]) -> str:
+    keys = list(state.keys())
+    if any(k.startswith("stats_cnn.") for k in keys):
+        return "cnn"
+    if any(k.startswith("player_encoder.") for k in keys) or any(k.startswith("map_emb.") for k in keys):
+        return "attention"
+    if any(k.startswith("phi.") for k in keys):
+        return "deepset"
+    # legacy MLP (old api)
+    return "mlp"
+
+
+def _infer_num_maps_from_state_dict(state: Dict[str, Any]) -> Optional[int]:
+    for k in ("map_embedding.weight", "map_emb.weight"):
+        w = state.get(k)
+        try:
+            if hasattr(w, "shape") and len(w.shape) == 2:
+                return int(w.shape[0])
+        except Exception:
+            continue
+    return None
 
 
 _ARTIFACTS: Optional[_Artifacts] = None
 _ARTIFACTS_LOCK = asyncio.Lock()
 
 
-def _make_model(num_maps: int, stats_input_size: int):
+def _make_model(model_type: str, num_maps: int, *, num_features: int, stats_input_size: int):
     import torch
     import torch.nn as nn
 
-    class WinPredictorWithMap(nn.Module):
+    class WinPredictorCNNWithMap(nn.Module):
+        def __init__(self, num_maps: int):
+            super().__init__()
+            self.map_embedding = nn.Embedding(num_embeddings=num_maps, embedding_dim=MAP_EMBEDDING_DIM)
+            self.stats_cnn = nn.Sequential(
+                nn.Conv2d(1, 32, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(32),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(32, 32, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(32),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(kernel_size=(2, 1)),
+                nn.Dropout2d(0.10),
+                nn.Conv2d(32, 64, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(kernel_size=(2, 1)),
+                nn.Dropout2d(0.15),
+                nn.Conv2d(64, 128, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                nn.AdaptiveAvgPool2d((1, 1)),
+            )
+            combined_input_size = 128 + MAP_EMBEDDING_DIM + len(GLOBAL_FEATURES)
+            self.head = nn.Sequential(
+                nn.Linear(combined_input_size, 128),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.25),
+                nn.Linear(128, 1),
+            )
+
+        def forward(self, x_stats_grid, x_map, x_global):
+            stats_feat = self.stats_cnn(x_stats_grid).flatten(1)
+            embs = self.map_embedding(x_map)
+            combined = torch.cat([stats_feat, embs, x_global], dim=1)
+            return self.head(combined)
+
+    class WinPredictorAttention(nn.Module):
+        def __init__(self, num_maps: int, num_features: int):
+            super().__init__()
+            self.map_emb = nn.Embedding(num_maps, MAP_EMBEDDING_DIM)
+            self.player_encoder = nn.Sequential(
+                nn.Linear(num_features, 128),
+                nn.LayerNorm(128),
+                nn.ReLU(),
+                nn.Dropout(0.2),
+                nn.Linear(128, 128),
+                nn.ReLU(),
+            )
+            self.attn = nn.Sequential(
+                nn.Linear(128, 64),
+                nn.Tanh(),
+                nn.Linear(64, 1),
+            )
+            combined_dim = (128 * 3) + MAP_EMBEDDING_DIM + len(GLOBAL_FEATURES)
+            self.head = nn.Sequential(
+                nn.Linear(combined_dim, 256),
+                nn.ReLU(),
+                nn.Dropout(0.3),
+                nn.Linear(256, 1),
+            )
+
+        def get_team_embedding(self, x, mask):
+            enc = self.player_encoder(x)
+            scores = self.attn(enc)
+            scores = scores.masked_fill(mask == 0, -1e9)
+            weights = torch.softmax(scores, dim=1)
+            return torch.sum(enc * weights, dim=1)
+
+        def forward(self, x_stats, x_map, x_global):
+            if x_stats.ndim == 4:
+                x_stats = x_stats.squeeze(1)
+            t1 = x_stats[:, :MAX_PLAYERS, :]
+            t2 = x_stats[:, MAX_PLAYERS:, :]
+            m1 = (t1.abs().sum(dim=-1, keepdim=True) > 0).float()
+            m2 = (t2.abs().sum(dim=-1, keepdim=True) > 0).float()
+            emb1 = self.get_team_embedding(t1, m1)
+            emb2 = self.get_team_embedding(t2, m2)
+            map_v = self.map_emb(x_map)
+            feat_diff = emb1 - emb2
+            combined = torch.cat([emb1, emb2, feat_diff, map_v, x_global], dim=1)
+            return self.head(combined)
+
+    class AttentionPooling(nn.Module):
+        def __init__(self, input_dim: int):
+            super().__init__()
+            self.attn_net = nn.Sequential(
+                nn.Linear(input_dim, 64),
+                nn.Tanh(),
+                nn.Linear(64, 1),
+            )
+
+        def forward(self, x, mask):
+            scores = self.attn_net(x)
+            scores = scores.masked_fill(mask == 0, -1e9)
+            weights = torch.softmax(scores, dim=1)
+            return torch.sum(x * weights, dim=1)
+
+    class WinPredictorDeepSetWithMap(nn.Module):
+        def __init__(self, num_maps: int, num_features: int):
+            super().__init__()
+            self.num_features = int(num_features)
+            self.map_embedding = nn.Embedding(num_embeddings=num_maps, embedding_dim=MAP_EMBEDDING_DIM)
+            phi_dim = 128
+            self.phi = nn.Sequential(
+                nn.Linear(self.num_features, 128),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.10),
+                nn.Linear(128, phi_dim),
+                nn.ReLU(inplace=True),
+            )
+            self.pool_t1 = AttentionPooling(phi_dim)
+            self.pool_t2 = AttentionPooling(phi_dim)
+            combined_dim = (phi_dim * 4) + MAP_EMBEDDING_DIM + len(GLOBAL_FEATURES)
+            self.head = nn.Sequential(
+                nn.Linear(combined_dim, 256),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.25),
+                nn.Linear(256, 64),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.15),
+                nn.Linear(64, 1),
+            )
+
+        def forward(self, x_stats_grid, x_map, x_global):
+            if x_stats_grid.ndim == 4:
+                x = x_stats_grid.squeeze(1)
+            else:
+                x = x_stats_grid
+            mask = (x.abs().sum(dim=-1, keepdim=True) > 0).float()
+            b, p, f = x.shape
+            x_flat = x.reshape(b * p, f)
+            e_flat = self.phi(x_flat)
+            e = e_flat.reshape(b, p, -1)
+            e1, e2 = e[:, :MAX_PLAYERS, :], e[:, MAX_PLAYERS : MAX_PLAYERS * 2, :]
+            m1, m2 = mask[:, :MAX_PLAYERS, :], mask[:, MAX_PLAYERS : MAX_PLAYERS * 2, :]
+            t1 = self.pool_t1(e1, m1)
+            t2 = self.pool_t2(e2, m2)
+            pair = torch.cat([t1, t2, (t1 - t2), (t1 * t2)], dim=1)
+            embs = self.map_embedding(x_map)
+            combined = torch.cat([pair, embs, x_global], dim=1)
+            return self.head(combined)
+
+    class WinPredictorWithMapMLP(nn.Module):
         def __init__(self, num_maps: int, stats_input_size: int):
-            super(WinPredictorWithMap, self).__init__()
+            super().__init__()
             self.map_embedding = nn.Embedding(num_embeddings=num_maps, embedding_dim=MAP_EMBEDDING_DIM)
             combined_input_size = stats_input_size + MAP_EMBEDDING_DIM
             self.net = nn.Sequential(
@@ -252,7 +540,13 @@ def _make_model(num_maps: int, stats_input_size: int):
             combined = torch.cat([x_stats, embs], dim=1)
             return self.net(combined)
 
-    return WinPredictorWithMap(num_maps=num_maps, stats_input_size=stats_input_size)
+    if model_type == "cnn":
+        return WinPredictorCNNWithMap(num_maps=num_maps)
+    if model_type == "attention":
+        return WinPredictorAttention(num_maps=num_maps, num_features=num_features)
+    if model_type == "deepset":
+        return WinPredictorDeepSetWithMap(num_maps=num_maps, num_features=num_features)
+    return WinPredictorWithMapMLP(num_maps=num_maps, stats_input_size=stats_input_size)
 
 
 async def _get_artifacts() -> _Artifacts:
@@ -274,17 +568,20 @@ async def _get_artifacts() -> _Artifacts:
                 detail=f"ML dependencies missing in API env: {e}. Install torch + joblib + scikit-learn + numpy.",
             )
 
-        # Priorité: variables d'env -> artifacts de ../ml -> fallback api/model
+        # Priorité: variables d'env -> ../ml (latest trained) -> fallback api/model (legacy)
         model_path = _resolve_artifact_path(
             settings.model_path,
+            "../ml/wot_model_map.pth",
             "model/wot_model_map.pth",
         )
         scaler_path = _resolve_artifact_path(
             settings.scaler_path,
+            "../ml/scaler.pkl",
             "model/scaler.pkl",
         )
         map_index_path = _resolve_artifact_path(
             settings.map_index_path,
+            "../ml/map_index.pkl",
             "model/map_index.pkl",
         )
 
@@ -303,12 +600,6 @@ async def _get_artifacts() -> _Artifacts:
         if not map_index_int:
             raise HTTPException(status_code=500, detail="map_index.pkl contains no usable entries")
 
-        scaler = joblib.load(str(scaler_path))
-
-        stats_dim = MAX_PLAYERS * len(FEATURE_COLS) * 2
-        num_maps = max(map_index_int.values()) + 1
-        model = _make_model(num_maps=num_maps, stats_input_size=stats_dim)
-
         try:
             state = torch.load(str(model_path), map_location="cpu")
         except Exception as e:
@@ -317,10 +608,56 @@ async def _get_artifacts() -> _Artifacts:
         if not isinstance(state, dict):
             logger.error("Model file is not a state_dict: %s", str(model_path))
             raise HTTPException(status_code=500, detail="wot_model_map.pth is not a state_dict")
-        model.load_state_dict(state)
+
+        scaler_obj = joblib.load(str(scaler_path))
+        if isinstance(scaler_obj, dict):
+            players_scaler = scaler_obj.get("players")
+            global_scaler = scaler_obj.get("global")
+            global_features = tuple(scaler_obj.get("global_features") or GLOBAL_FEATURES)
+        else:
+            # Backward compatible: old scaler.pkl contained only the players scaler
+            players_scaler = scaler_obj
+            global_scaler = None
+            global_features = GLOBAL_FEATURES
+
+        model_type = _infer_model_type_from_state_dict(state)
+        stats_dim = MAX_PLAYERS * len(FEATURE_COLS) * 2
+        inferred_num_maps = _infer_num_maps_from_state_dict(state)
+        num_maps = inferred_num_maps or (max(map_index_int.values()) + 1)
+        if inferred_num_maps is not None and inferred_num_maps != (max(map_index_int.values()) + 1):
+            logger.info(
+                "num_maps mismatch: state_dict=%d map_index=%d; using state_dict value",
+                int(inferred_num_maps),
+                int(max(map_index_int.values()) + 1),
+            )
+
+        model = _make_model(
+            model_type=model_type,
+            num_maps=num_maps,
+            num_features=len(FEATURE_COLS),
+            stats_input_size=stats_dim,
+        )
+        try:
+            model.load_state_dict(state)
+        except Exception as e:
+            logger.exception(
+                "model.load_state_dict failed model_path=%s model_type=%s num_maps=%d map_emb_dim=%d",
+                str(model_path),
+                str(model_type),
+                int(num_maps),
+                int(MAP_EMBEDDING_DIM),
+            )
+            raise HTTPException(status_code=500, detail=f"Model load_state_dict failed: {e}")
         model.eval()
 
-        _ARTIFACTS = _Artifacts(model=model, scaler=scaler, map_index=map_index_int)
+        _ARTIFACTS = _Artifacts(
+            model=model,
+            players_scaler=players_scaler,
+            global_scaler=global_scaler,
+            global_features=global_features,
+            map_index=map_index_int,
+            model_type=model_type,
+        )
         return _ARTIFACTS
 
 
@@ -563,9 +900,13 @@ async def _predict_win_from_features(
     team1_stats = [_stats_for(n) for n in team1_names]
     team2_stats = [_stats_for(n) for n in team2_names]
 
-    vec1 = _get_padded_team_vector(team1_stats)
-    vec2 = _get_padded_team_vector(team2_stats)
-    x_stats = vec1 + vec2  # 390
+    # Player matrix (30, 13) like ml/main.py
+    mat1 = _get_padded_team_matrix(team1_stats)
+    mat2 = _get_padded_team_matrix(team2_stats)
+    match_matrix = mat1 + mat2  # (30, 13)
+
+    # Engineered global features (team1 - team2)
+    global_feats = _compute_global_features(team1_stats, team2_stats)
 
     try:
         import numpy as np
@@ -574,18 +915,35 @@ async def _predict_win_from_features(
         logger.exception("ML imports failed (numpy/torch missing?)")
         raise HTTPException(status_code=503, detail=f"ML dependencies missing in API env: {e}")
 
-    x_np = np.asarray([x_stats], dtype=np.float32)
+    x_np = np.asarray(match_matrix, dtype=np.float32).reshape(1, -1)
     try:
-        x_scaled = artifacts.scaler.transform(x_np)
+        x_scaled_flat = artifacts.players_scaler.transform(x_np)
     except Exception as e:
-        logger.exception("Scaler transform failed")
-        raise HTTPException(status_code=500, detail=f"Scaler transform failed: {e}")
+        logger.exception("Players scaler transform failed")
+        raise HTTPException(status_code=500, detail=f"Players scaler transform failed: {e}")
 
-    x_tensor = torch.tensor(x_scaled, dtype=torch.float32)
+    # (B, 1, 30, 13)
+    x_grid = x_scaled_flat.reshape(1, 1, MAX_PLAYERS * 2, len(FEATURE_COLS)).astype(np.float32, copy=False)
+    x_tensor = torch.tensor(x_grid, dtype=torch.float32)
+
+    g_np = np.asarray([global_feats], dtype=np.float32)
+    if artifacts.global_scaler is not None:
+        try:
+            g_scaled = artifacts.global_scaler.transform(g_np)
+        except Exception as e:
+            logger.exception("Global scaler transform failed")
+            raise HTTPException(status_code=500, detail=f"Global scaler transform failed: {e}")
+        g_tensor = torch.tensor(g_scaled, dtype=torch.float32)
+    else:
+        g_tensor = torch.tensor(g_np, dtype=torch.float32)
     map_tensor = torch.tensor([int(map_idx)], dtype=torch.long)
 
     with torch.no_grad():
-        logits = artifacts.model(x_tensor, map_tensor)
+        if artifacts.model_type == "mlp":
+            # Legacy: expects flat (B, 390)
+            logits = artifacts.model(torch.tensor(x_scaled_flat, dtype=torch.float32), map_tensor)
+        else:
+            logits = artifacts.model(x_tensor, map_tensor, g_tensor)
         prob_spawn1 = torch.sigmoid(logits).item()
 
     # Le modèle est entraîné sur la cible "spawn_1 gagne" (cf ml/data CSV, target).

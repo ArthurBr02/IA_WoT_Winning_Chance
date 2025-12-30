@@ -18,7 +18,7 @@ import static fr.arthurbr02.battledetail.BattleDetailService.fetchBattleDetail;
 
 public class CombinedBattlesService {
     private static final Logger logger = LoggerFactory.getLogger(CombinedBattlesService.class);
-    private static final String API_URL = "https://api.tomato.gg/api/player/combined-battles/{player_id}?page=0&days=36500&pageSize=10&sortBy=battle_time&sortDirection=desc&platoon=in-and-outside-platoon&spawn=all&won=all&classes=&nations=&roles=&tiers=&tankType=all";
+    private static final String API_URL = "https://api.tomato.gg/api/player/combined-battles/{player_id}?page=0&days=36500&pageSize=50&sortBy=battle_time&sortDirection=desc&platoon=in-and-outside-platoon&spawn=all&won=all&classes=&nations=&roles=&tiers=&tankType=all";
 
     public static CombinedBattles fetchCombinedBattles(String playerId) {
         String url = API_URL.replace("{player_id}", playerId);

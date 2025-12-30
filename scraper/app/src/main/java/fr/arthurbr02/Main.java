@@ -16,7 +16,7 @@ import java.util.*;
 public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
     private static final String INITIAL_PLAYER_ID = "532440001";
-    private static final int PLAYERS_TO_FETCH = 50;
+    private static final int PLAYERS_TO_FETCH = 100;
 
     public static void main(String[] args) {
         logger.info("=== Starting scraper ===");
