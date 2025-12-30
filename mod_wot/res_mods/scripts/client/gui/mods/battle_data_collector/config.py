@@ -68,24 +68,21 @@ COLLECT_PLAYER_STATS = False
 # Prédiction de victoire via l'API locale (/predict/win)
 COLLECT_PREDICTION = True
 
-# Afficher un message en jeu au début de la bataille (SystemMessages)
+# Afficher la prédiction à l'écran (GUI.Text)
 SHOW_PREDICTION_ON_SCREEN = True
 
-# Préfixe du message affiché (chat/toast)
+# Debug: forcer un overlay GUI.Text dès le début de bataille
+# (permet de valider GUI.Text indépendamment de la prédiction)
+DEBUG_GUI_OVERLAY = False
+
+# Envoyer la prédiction dans le chat de bataille
+SEND_PREDICTION_TO_CHAT = True
+
+# Préfixe du message affiché
 PREDICTION_MESSAGE_PREFIX = '[IA]'
 
-# Overlay persistant en bataille (texte haut-droite)
-SHOW_PREDICTION_OVERLAY = True
-
-# Texte affiché avant d'avoir la réponse API
-PREDICTION_OVERLAY_PENDING_TEXT = 'Prediction : ...'
-
-# Taille du texte (1.0 = normal)
-PREDICTION_OVERLAY_SCALE = 2.0
-
-# Position de l'overlay (x, y) en coordonnées normalisées (approx).
-# Valeur par défaut: haut-droite.
-PREDICTION_OVERLAY_POS = (0.99, 0.95)
+# Intervalle de réaffichage de la prédiction (secondes)
+PREDICTION_DISPLAY_INTERVAL = 20.0
 
 # ============================================================================
 # OPTIONS AVANCÉES

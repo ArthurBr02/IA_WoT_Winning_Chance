@@ -7,10 +7,10 @@ import BigWorld
 import json
 from datetime import datetime
 from PlayerEvents import g_playerEvents
-try:
-    import GUI
-except Exception:
-    GUI = None
+
+# NOTE: le module GUI n'est pas forcément importable au chargement.
+# On l'importe de façon "lazy" au moment de créer l'overlay.
+GUI = None
 
 unicode = globals().get('unicode', str)
 try:
@@ -48,10 +48,12 @@ class BattleDataCollector(object):
             self._battleData = None
             self._pendingStats = False
             self._collectCallbackPending = False
-
             self._predictionOverlay = None
-            self._predictionOverlayInitPending = False
-            self._predictionOverlayInitAttempts = 0
+            self._overlayInitPending = False
+            self._overlayInitAttempts = 0
+            self._overlayLastText = None
+            self._overlayLastColor = None
+            self._inBattle = False
             
             self._registerEvents()
             print("[BattleDataCollector] Collecteur initialise avec succes")
@@ -77,6 +79,8 @@ class BattleDataCollector(object):
     
     def destroy(self):
         """Désenregistre les événements"""
+        print("[BattleDataCollector] Destruction du collecteur...")
+        self._destroyOverlay()
         g_playerEvents.onAvatarBecomePlayer -= self._onBattleStart
         g_playerEvents.onAvatarBecomeNonPlayer -= self._onBattleEnd
     
@@ -89,13 +93,12 @@ class BattleDataCollector(object):
                 return
             
             print("[BattleDataCollector] Début de collecte des données")
+            self._inBattle = True
 
-            # Overlay persistant (haut-droite) visible pendant toute la bataille
+            # Debug: valider GUI.Text immédiatement
             try:
-                if getattr(config, 'SHOW_PREDICTION_OVERLAY', True):
-                    pending = getattr(config, 'PREDICTION_OVERLAY_PENDING_TEXT', 'Prediction: ...')
-                    # L'UI peut ne pas être prête immédiatement: on tente + retry.
-                    self._ensurePredictionOverlay(text=pending, retries=25, delay=0.2)
+                if getattr(config, 'DEBUG_GUI_OVERLAY', False):
+                    self._createOverlay(u"[IA] GUI.Text TEST", (255, 255, 255, 255))
             except Exception:
                 pass
 
@@ -105,6 +108,15 @@ class BattleDataCollector(object):
         
         except Exception as e:
             print("[BattleDataCollector] Erreur _onBattleStart: {}".format(str(e)))
+
+    def _onBattleEnd(self):
+        """Appelé quand le joueur quitte une bataille"""
+        try:
+            print("[BattleDataCollector] Fin de bataille")
+            self._inBattle = False
+            self._destroyOverlay()
+        except Exception as e:
+            print("[BattleDataCollector] Erreur _onBattleEnd: {}".format(str(e)))
 
     def _collectBattleDataWithRetry(self, arena, retries, delay):
         try:
@@ -179,27 +191,18 @@ class BattleDataCollector(object):
             print("[BattleDataCollector] Erreur _collectBattleDataWithRetry: {}".format(str(e)))
 
     def _onPredictionReceived(self, prediction):
-        """Callback de prédiction: met à jour l'overlay + affiche un toast (thread-safe)."""
+        """Callback après réception de la prédiction."""
+        print("[BattleDataCollector] *** _onPredictionReceived appelé ***")
+        print("[BattleDataCollector] Prediction reçue: {}".format(prediction))
+        
         try:
-            def _fmt_pct(value):
+            def _fmt_pct(v):
                 try:
-                    pct = float(value)
-                    if pct < 0.0:
-                        pct = 0.0
-                    if pct > 100.0:
-                        pct = 100.0
-                    # Affichage compact si quasi entier
-                    try:
-                        if abs(pct - round(pct)) < 0.01:
-                            return u"{}%".format(int(round(pct)))
-                    except Exception:
-                        pass
-                    return u"{:.1f}%".format(pct)
+                    return u"{:.1f}%".format(float(v))
                 except Exception:
                     return None
 
             def _normalize_prediction(pred):
-                """Retourne (predicted_bool_or_None, pct_str_or_None)."""
                 if isinstance(pred, dict):
                     try:
                         predicted = pred.get('predicted')
@@ -210,7 +213,6 @@ class BattleDataCollector(object):
                     except Exception:
                         pct_str = None
 
-                    # Si l'API ne renvoie pas predicted, déduire du %
                     if predicted not in (True, False):
                         try:
                             v = float(pred.get('prob_user'))
@@ -219,207 +221,278 @@ class BattleDataCollector(object):
                             predicted = None
                     return predicted, pct_str
 
-                # Ancien format: bool
                 if pred in (True, False):
                     return pred, None
                 return None, None
 
             predicted_bool, pct_str = _normalize_prediction(prediction)
+            print("[BattleDataCollector] Normalized: predicted={}, pct={}".format(predicted_bool, pct_str))
 
-            def _format_message():
-                prefix = getattr(config, 'PREDICTION_MESSAGE_PREFIX', '[IA]')
-                if predicted_bool is True:
-                    if pct_str:
-                        return u"{} Prediction : Victoire ({})".format(prefix, pct_str), 'info'
-                    return u"{} Prediction : Victoire".format(prefix), 'info'
-                if predicted_bool is False:
-                    if pct_str:
-                        return u"{} Prediction : Defaite ({})".format(prefix, pct_str), 'warning'
-                    return u"{} Prediction : Defaite".format(prefix), 'warning'
-                return u"{} Prediction: indisponible".format(prefix), 'warning'
+            # Formatter le message final
+            prefix = getattr(config, 'PREDICTION_MESSAGE_PREFIX', '[IA]')
+            if predicted_bool is True:
+                if pct_str:
+                    msg = u"{} VICTOIRE ({})".format(prefix, pct_str)
+                    chat_msg = u"{} Prédiction: VICTOIRE ({})".format(prefix, pct_str)
+                else:
+                    msg = u"{} VICTOIRE".format(prefix)
+                    chat_msg = u"{} Prédiction: VICTOIRE".format(prefix)
+                color = (100, 255, 100, 255)  # Vert
+            elif predicted_bool is False:
+                if pct_str:
+                    msg = u"{} DEFAITE ({})".format(prefix, pct_str)
+                    chat_msg = u"{} Prédiction: DEFAITE ({})".format(prefix, pct_str)
+                else:
+                    msg = u"{} DEFAITE".format(prefix)
+                    chat_msg = u"{} Prédiction: DEFAITE".format(prefix)
+                color = (255, 100, 100, 255)  # Rouge
+            else:
+                msg = u"{} ???".format(prefix)
+                chat_msg = u"{} Prédiction indisponible".format(prefix)
+                color = (255, 255, 100, 255)  # Jaune
 
-            def _show():
-                try:
-                    msg, msg_type = _format_message()
+            print("[BattleDataCollector] Messages formatés:")
+            print("[BattleDataCollector]   Overlay: {}".format(msg))
+            print("[BattleDataCollector]   Chat: {}".format(chat_msg))
+            print("[BattleDataCollector]   Couleur: {}".format(color))
 
-                    # Overlay persistant (haut-droite)
-                    try:
-                        if getattr(config, 'SHOW_PREDICTION_OVERLAY', True):
-                            # Overlay sans préfixe si on préfère un affichage compact
-                            if predicted_bool is True:
-                                overlay_text = u"Prediction : Victoire"
-                                if pct_str:
-                                    overlay_text = u"{} ({})".format(overlay_text, pct_str)
-                            elif predicted_bool is False:
-                                overlay_text = u"Prediction : Defaite"
-                                if pct_str:
-                                    overlay_text = u"{} ({})".format(overlay_text, pct_str)
-                            else:
-                                overlay_text = u"Prediction: indisponible"
-                            self._setPredictionOverlayText(overlay_text)
-                    except Exception:
-                        pass
+            # Créer l'overlay permanent
+            show_screen = getattr(config, 'SHOW_PREDICTION_ON_SCREEN', True)
+            send_chat = getattr(config, 'SEND_PREDICTION_TO_CHAT', True)
+            
+            print("[BattleDataCollector] Config: SHOW_PREDICTION_ON_SCREEN={}".format(show_screen))
+            print("[BattleDataCollector] Config: SEND_PREDICTION_TO_CHAT={}".format(send_chat))
+            
+            if show_screen:
+                print("[BattleDataCollector] Appel _createOverlay...")
+                self._createOverlay(msg, color)
+            else:
+                print("[BattleDataCollector] Overlay désactivé dans config")
+            
+            # Envoyer dans le chat d'équipe
+            if send_chat:
+                print("[BattleDataCollector] Appel _sendTeamChatMessage...")
+                self._sendTeamChatMessage(chat_msg)
+            else:
+                print("[BattleDataCollector] Chat désactivé dans config")
 
-                    # Toast / log (optionnel)
-                    if not getattr(config, 'SHOW_PREDICTION_ON_SCREEN', True):
-                        return
+        except Exception as e:
+            print("[BattleDataCollector] ERREUR _onPredictionReceived: {}".format(str(e)))
+            import traceback
+            traceback.print_exc()
 
-                    # Essayer SystemMessages (toast/centre écran). Fallback: log.
-                    try:
-                        from gui import SystemMessages
-                        try:
-                            if msg_type == 'warning':
-                                sm_type = SystemMessages.SM_TYPE.Warning
-                            else:
-                                sm_type = SystemMessages.SM_TYPE.Information
-                        except Exception:
-                            sm_type = SystemMessages.SM_TYPE.Information
+    def _createOverlay(self, text, color=(255, 255, 255, 255)):
+        """Crée un overlay persistant via GUI.Text.
 
-                        SystemMessages.pushMessage(msg, type=sm_type)
-                        return
-                    except Exception:
-                        pass
+        Important: sur certains clients, GUI n'est importable qu'après init de l'UI.
+        On retente plusieurs fois via BigWorld.callback jusqu'à succès.
+        """
+        self._overlayLastText = text
+        self._overlayLastColor = color
+        self._overlayInitAttempts = 0
 
-                    print("[BattleDataCollector] {}".format(msg))
-                except Exception as e:
-                    print("[BattleDataCollector] Erreur affichage prediction: {}".format(str(e)))
-
-            # Le callback arrive depuis un thread; repasser sur le thread BigWorld.
+        def _get_screen_size():
+            # Best-effort
             try:
-                BigWorld.callback(0.1, _show)
+                fn = getattr(BigWorld, 'screenSize', None)
+                if callable(fn):
+                    w, h = fn()
+                    return int(w), int(h)
             except Exception:
-                _show()
-
-        except Exception:
-            pass
-
-    def _setPredictionOverlayText(self, text):
-        """Crée/maj un overlay texte en haut-droite (GUI.Text) pendant la bataille."""
-        if GUI is None:
-            return
-
-        # S'assure que l'overlay existe (sans spam) puis met à jour le texte.
-        self._ensurePredictionOverlay(text=text, retries=0, delay=0.0)
-
-    def _ensurePredictionOverlay(self, text=None, retries=0, delay=0.2):
-        """Crée l'overlay si nécessaire, avec retry (UI pas prête au début)."""
-        if GUI is None:
-            return
-
-        def _apply():
-            created = False
+                pass
             try:
-                if self._predictionOverlay is None:
-                    t = GUI.Text(u"")
+                fn = getattr(BigWorld, 'screenResolution', None)
+                if callable(fn):
+                    w, h = fn()
+                    return int(w), int(h)
+            except Exception:
+                pass
+            return None, None
 
-                    # Ancrages si supportés (important: éviter que le texte déborde à droite)
+        def _import_gui():
+            global GUI
+            if GUI is not None:
+                return GUI
+            try:
+                import GUI as _GUI
+                GUI = _GUI
+                return GUI
+            except Exception:
+                pass
+
+            # Certains clients exposent GUI via BigWorld.GUI
+            try:
+                bw_gui = getattr(BigWorld, 'GUI', None)
+                if bw_gui is not None and hasattr(bw_gui, 'Text') and hasattr(bw_gui, 'addRoot'):
+                    return bw_gui
+            except Exception:
+                pass
+
+            return None
+
+        def _try_create():
+            self._overlayInitPending = False
+            self._overlayInitAttempts += 1
+
+            gui = _import_gui()
+            if gui is None:
+                # UI pas prête / module non exposé dans cette phase
+                if self._overlayInitAttempts in (1, 5, 10, 20, 40):
+                    print("[BattleDataCollector] GUI import impossible (tentative {})".format(self._overlayInitAttempts))
+                if self._overlayInitAttempts < 60:
                     try:
-                        t.horizontalAnchor = 'RIGHT'
+                        BigWorld.callback(0.25, _schedule)
                     except Exception:
                         pass
+                return
+
+            try:
+                self._destroyOverlay()
+            except Exception:
+                pass
+
+            try:
+                overlay = gui.Text(self._overlayLastText)
+
+                # Font
+                for font_id in ('system_large.font', 'system_medium.font', 'default_large.font', 'default_medium.font'):
                     try:
-                        t.verticalAnchor = 'TOP'
+                        overlay.font = font_id
+                        break
                     except Exception:
-                        pass
+                        continue
 
-                    # Position (haut-droite par défaut)
-                    try:
-                        pos = getattr(config, 'PREDICTION_OVERLAY_POS', (0.99, 0.95))
-                        t.position = (float(pos[0]), float(pos[1]), 0.0)
-                    except Exception:
-                        try:
-                            t.position = (0.99, 0.95, 0.0)
-                        except Exception:
-                            pass
-
-                    # Taille (scale)
-                    try:
-                        s = float(getattr(config, 'PREDICTION_OVERLAY_SCALE', 1.6))
-                        t.scale = (s, s, 1.0)
-                    except Exception:
-                        pass
-
-                    # Couleur + font si supportés
-                    try:
-                        t.colour = (255, 255, 255, 255)
-                    except Exception:
-                        pass
-                    try:
-                        t.font = 'system_small.font'
-                    except Exception:
-                        pass
-
-                    # Ajout au root (si disponible)
-                    add_root = getattr(GUI, 'addRoot', None)
-                    if add_root is None:
-                        raise Exception('GUI.addRoot indisponible')
-                    add_root(t)
-
-                    self._predictionOverlay = t
-                    created = True
-
-                if self._predictionOverlay is not None and text is not None:
-                    try:
-                        self._predictionOverlay.text = text
-                    except Exception:
-                        try:
-                            self._predictionOverlay.text = unicode(text)
-                        except Exception:
-                            pass
-
-            except Exception as e:
-                # UI pas prête / API GUI différente: retry limité
+                # Couleur
                 try:
-                    if getattr(config, 'DEBUG_MODE', False):
-                        print('[BattleDataCollector] Overlay init failed (attempt {}): {}'.format(self._predictionOverlayInitAttempts, str(e)))
+                    overlay.colour = self._overlayLastColor
                 except Exception:
                     pass
 
-                if retries > 0 and not self._predictionOverlayInitPending:
-                    self._predictionOverlayInitPending = True
+                # Ancrage + position
+                try:
+                    overlay.horizontalAnchor = 'RIGHT'
+                except Exception:
+                    pass
+                try:
+                    overlay.verticalAnchor = 'TOP'
+                except Exception:
+                    pass
 
-                    def _retry():
-                        self._predictionOverlayInitPending = False
-                        self._predictionOverlayInitAttempts += 1
-                        self._ensurePredictionOverlay(text=text, retries=retries - 1, delay=delay)
-
+                w, h = _get_screen_size()
+                # Beaucoup de clients WoT utilisent un repère en pixels centré (0,0 au centre).
+                # On vise "haut-droite" avec un padding.
+                if w and h:
+                    x = float((w / 2) - 40)
+                    y = float((-h / 2) + 40)
                     try:
-                        BigWorld.callback(delay, _retry)
+                        overlay.position = (x, y)
                     except Exception:
-                        _retry()
-                return
-
-            # reset state si créé
-            if created:
-                self._predictionOverlayInitPending = False
-            return
-
-        # Toujours côté thread BigWorld
-        try:
-            BigWorld.callback(0.0, _apply)
-        except Exception:
-            _apply()
-
-    def _destroyPredictionOverlay(self):
-        if GUI is None:
-            self._predictionOverlay = None
-            return
-
-        def _apply():
-            try:
-                if self._predictionOverlay is not None:
+                        try:
+                            overlay.position = (x, y, 0.0)
+                        except Exception:
+                            pass
+                else:
+                    # Fallback: coords normalisées si supportées
                     try:
-                        GUI.delRoot(self._predictionOverlay)
+                        overlay.position = (0.98, 0.02)
+                    except Exception:
+                        try:
+                            overlay.position = (0.98, 0.02, 0.0)
+                        except Exception:
+                            pass
+
+                # Scale (si supporté)
+                try:
+                    overlay.scale = (2.0, 2.0)
+                except Exception:
+                    try:
+                        overlay.scale = (2.0, 2.0, 1.0)
                     except Exception:
                         pass
-                self._predictionOverlay = None
-            except Exception:
-                self._predictionOverlay = None
 
+                try:
+                    overlay.visible = True
+                except Exception:
+                    pass
+
+                gui.addRoot(overlay)
+                self._predictionOverlay = overlay
+                print("[BattleDataCollector] GUI.Text overlay OK (tentative {})".format(self._overlayInitAttempts))
+                return
+            except Exception as e:
+                # UI pas encore prête, ou API différente
+                if self._overlayInitAttempts in (1, 5, 10, 20, 40):
+                    print("[BattleDataCollector] GUI.Text erreur tentative {}: {}".format(self._overlayInitAttempts, str(e)))
+                if self._overlayInitAttempts < 60:
+                    try:
+                        BigWorld.callback(0.25, _schedule)
+                    except Exception:
+                        pass
+
+        def _schedule():
+            if self._overlayInitPending:
+                return
+            self._overlayInitPending = True
+            try:
+                BigWorld.callback(0.0, _try_create)
+            except Exception:
+                _try_create()
+
+        _schedule()
+    
+    def _destroyOverlay(self):
+        """Détruit l'overlay"""
+        if self._predictionOverlay is None:
+            return
+        
+        print("[BattleDataCollector] Destruction de l'overlay...")
         try:
-            BigWorld.callback(0.0, _apply)
-        except Exception:
-            _apply()
+            if hasattr(BigWorld, 'GUI') and hasattr(BigWorld.GUI, 'delRoot'):
+                BigWorld.GUI.delRoot(self._predictionOverlay)
+                print("[BattleDataCollector] Overlay détruit via BigWorld.GUI")
+            elif GUI is not None and hasattr(GUI, 'delRoot'):
+                GUI.delRoot(self._predictionOverlay)
+                print("[BattleDataCollector] Overlay détruit via GUI")
+        except Exception as e:
+            print("[BattleDataCollector] Erreur destruction overlay: {}".format(str(e)))
+        finally:
+            self._predictionOverlay = None
+    
+    def _sendTeamChatMessage(self, msg):
+        """Envoie un message dans le chat d'équipe (visible par tous)"""
+        try:
+            # Méthode 1: Via MessengerEntry (API moderne)
+            try:
+                from messenger import MessengerEntry
+                from messenger.proto.events import g_messengerEvents
+                from gui.shared import g_eventBus, events, EVENT_BUS_SCOPE
+                
+                if MessengerEntry.g_instance:
+                    controller = MessengerEntry.g_instance.protos.BW_CHAT2.channelsCtrl
+                    if controller:
+                        # Envoyer au canal d'équipe
+                        controller.sendMessage(msg.encode('utf-8') if isinstance(msg, unicode) else msg)
+                        print("[BattleDataCollector] Message envoyé (MessengerEntry): {}".format(msg))
+                        return
+            except Exception as e1:
+                print("[BattleDataCollector] MessengerEntry failed: {}".format(str(e1)))
+            
+            # Méthode 2: Via base.sendCommand
+            try:
+                avatar = BigWorld.player()
+                if avatar and hasattr(avatar, 'base'):
+                    # Commande chat d'équipe
+                    avatar.base.sendCommand(1, msg.encode('utf-8') if isinstance(msg, unicode) else msg)
+                    print("[BattleDataCollector] Message envoyé (base.sendCommand): {}".format(msg))
+                    return
+            except Exception as e2:
+                print("[BattleDataCollector] base.sendCommand failed: {}".format(str(e2)))
+
+            # Pas de fallback: si on ne peut pas envoyer au chat, on log seulement.
+            print("[BattleDataCollector] Impossible d'envoyer au chat d'équipe sur ce client")
+                
+        except Exception as e:
+            print("[BattleDataCollector] Erreur envoi chat: {}".format(str(e)))
 
     def _defaultStats(self):
         # Schéma stable: toujours les mêmes clés
@@ -627,13 +700,3 @@ class BattleDataCollector(object):
         
         except Exception as e:
             print("[BattleDataCollector] Erreur _onStatsReceived: {}".format(str(e)))
-    
-    def _onBattleEnd(self):
-        """Appelé quand la bataille se termine"""
-        print("[BattleDataCollector] Fin de bataille")
-        self._battleData = None
-        self._pendingStats = False
-        try:
-            self._destroyPredictionOverlay()
-        except Exception:
-            pass
