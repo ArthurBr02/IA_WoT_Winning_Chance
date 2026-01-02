@@ -8,12 +8,15 @@ import androidx.annotation.Nullable;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
+import java.io.BufferedWriter;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.SyncFailedException;
 import java.nio.charset.StandardCharsets;
 
 public class ProgressManager {
@@ -44,13 +47,20 @@ public class ProgressManager {
             copyFile(progressFile, backupFile);
         }
 
-        String json = gson.toJson(state);
-
         // write tmp then rename
         try (FileOutputStream fos = new FileOutputStream(tmpFile, false)) {
-            fos.write(json.getBytes(StandardCharsets.UTF_8));
+            try (OutputStreamWriter osw = new OutputStreamWriter(fos, StandardCharsets.UTF_8);
+                 BufferedWriter bw = new BufferedWriter(osw)) {
+                gson.toJson(state, bw);
+                bw.flush();
+            }
             fos.flush();
-            fos.getFD().sync();
+            try {
+                fos.getFD().sync();
+            } catch (SyncFailedException ignored) {
+                // Best-effort: some Android devices/FS can fail fsync even if the write succeeded.
+                // We prefer keeping the scraper running rather than treating this as fatal.
+            }
         }
 
         if (!tmpFile.renameTo(progressFile)) {
@@ -122,7 +132,11 @@ public class ProgressManager {
                 out.write(buf, 0, len);
             }
             out.flush();
-            out.getFD().sync();
+            try {
+                out.getFD().sync();
+            } catch (SyncFailedException ignored) {
+                // Best-effort
+            }
         }
     }
 }

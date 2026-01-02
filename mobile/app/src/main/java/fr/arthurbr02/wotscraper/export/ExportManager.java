@@ -11,6 +11,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.SyncFailedException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -31,7 +33,7 @@ public class ExportManager {
     public static File exportLatest(@NonNull Context context, @NonNull ExportData data) throws IOException {
         File dir = ensureExportDir(context);
         File target = new File(dir, LATEST_EXPORT_FILE);
-        writeAtomic(target, gson.toJson(data));
+        writeAtomicJson(target, data);
         return target;
     }
 
@@ -63,7 +65,7 @@ public class ExportManager {
         File dir = ensureExportDir(context);
         String filename = "export_data_" + System.currentTimeMillis() + ".json";
         File target = new File(dir, filename);
-        writeAtomic(target, gson.toJson(data));
+        writeAtomicJson(target, data);
         return target;
     }
 
@@ -93,7 +95,7 @@ public class ExportManager {
         return dir;
     }
 
-    private static void writeAtomic(@NonNull File target, @NonNull String content) throws IOException {
+    private static void writeAtomicJson(@NonNull File target, @NonNull Object data) throws IOException {
         File dir = target.getParentFile();
         if (dir == null) {
             throw new IOException("Invalid export target: " + target.getAbsolutePath());
@@ -101,9 +103,16 @@ public class ExportManager {
 
         File tmp = new File(dir, target.getName() + ".tmp");
         try (FileOutputStream fos = new FileOutputStream(tmp, false)) {
-            fos.write(content.getBytes(StandardCharsets.UTF_8));
+            try (OutputStreamWriter osw = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
+                gson.toJson(data, osw);
+                osw.flush();
+            }
             fos.flush();
-            fos.getFD().sync();
+            try {
+                fos.getFD().sync();
+            } catch (SyncFailedException ignored) {
+                // Best-effort
+            }
         }
 
         if (!tmp.renameTo(target)) {
@@ -116,7 +125,11 @@ public class ExportManager {
                     out.write(buf, 0, len);
                 }
                 out.flush();
-                out.getFD().sync();
+                try {
+                    out.getFD().sync();
+                } catch (SyncFailedException ignored) {
+                    // Best-effort
+                }
             }
             //noinspection ResultOfMethodCallIgnored
             tmp.delete();

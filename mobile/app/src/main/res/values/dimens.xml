@@ -1,4 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <dimen name="json_indent_base">12dp</dimen>
+
+    <dimen name="screen_padding">16dp</dimen>
+    <dimen name="card_padding">16dp</dimen>
+    <dimen name="section_spacing">16dp</dimen>
+    <dimen name="item_spacing">12dp</dimen>
+    <dimen name="element_spacing">8dp</dimen>
+    <dimen name="element_spacing_small">6dp</dimen>
+    <dimen name="control_spacing">10dp</dimen>
+
+    <dimen name="bottom_nav_height">56dp</dimen>
 </resources>

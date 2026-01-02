@@ -1,8 +1,6 @@
 package fr.arthurbr02.wotscraper.ui;
 
 import android.os.Bundle;
-import android.text.Editable;
-import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -47,9 +45,9 @@ public class SettingsFragment extends Fragment {
         EditText etInitial = view.findViewById(R.id.etInitialPlayer);
 
         RadioGroup rgSave = view.findViewById(R.id.rgSaveFrequency);
-        RadioButton rb5 = view.findViewById(R.id.rbSave5);
-        RadioButton rb10 = view.findViewById(R.id.rbSave10);
-        RadioButton rb20 = view.findViewById(R.id.rbSave20);
+        RadioButton rb50 = view.findViewById(R.id.rbSave50);
+        RadioButton rb100 = view.findViewById(R.id.rbSave100);
+        RadioButton rb200 = view.findViewById(R.id.rbSave200);
 
         SwitchMaterial swAuto = view.findViewById(R.id.swAutoExport);
         SwitchMaterial swComplete = view.findViewById(R.id.swNotifComplete);
@@ -130,21 +128,21 @@ public class SettingsFragment extends Fragment {
         });
 
         int saveFreq = prefs.getSaveFrequencyIterations();
-        if (saveFreq == 10) {
-            rb10.setChecked(true);
-        } else if (saveFreq == 20) {
-            rb20.setChecked(true);
+        if (saveFreq == 100) {
+            rb100.setChecked(true);
+        } else if (saveFreq == 200) {
+            rb200.setChecked(true);
         } else {
-            rb5.setChecked(true);
+            rb50.setChecked(true);
         }
 
         rgSave.setOnCheckedChangeListener((group, checkedId) -> {
-            if (checkedId == R.id.rbSave10) {
-                prefs.setSaveFrequencyIterations(10);
-            } else if (checkedId == R.id.rbSave20) {
-                prefs.setSaveFrequencyIterations(20);
+            if (checkedId == R.id.rbSave100) {
+                prefs.setSaveFrequencyIterations(100);
+            } else if (checkedId == R.id.rbSave200) {
+                prefs.setSaveFrequencyIterations(200);
             } else {
-                prefs.setSaveFrequencyIterations(5);
+                prefs.setSaveFrequencyIterations(50);
             }
         });
 

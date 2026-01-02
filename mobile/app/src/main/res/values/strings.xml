@@ -7,12 +7,12 @@
     <string name="nav_exports">Exports</string>
     <string name="nav_settings">Paramètres</string>
 
-    <string name="action_start">START</string>
-    <string name="action_stop">STOP</string>
+    <string name="action_start">Démarrer</string>
+    <string name="action_stop">Arrêter</string>
 
     <string name="action_view_logs">Voir logs</string>
     <string name="action_export">Export</string>
-    <string name="action_reset">Reset</string>
+    <string name="action_reset">Réinitialiser</string>
 
     <string name="exports_empty">Aucun export pour le moment</string>
     <string name="export_share">Partager</string>

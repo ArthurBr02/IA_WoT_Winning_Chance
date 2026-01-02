@@ -18,6 +18,9 @@ import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 import fr.arthurbr02.wotscraper.R;
 import fr.arthurbr02.wotscraper.export.ExportData;
 import fr.arthurbr02.wotscraper.export.ExportManager;
@@ -47,6 +50,9 @@ public class MainFragment extends Fragment {
 
     private ScraperUiState lastState = ScraperUiState.idle();
     private final Handler handler = new Handler(Looper.getMainLooper());
+
+    private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor();
+    private volatile int refreshToken = 0;
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
@@ -115,20 +121,26 @@ public class MainFragment extends Fragment {
         btnReset.setOnClickListener(v -> resetScraping());
 
         // Best-effort: load last progress from disk so the UI is useful even before the service runs.
-        refreshFromDisk();
+        // Done async in onStart to avoid blocking navigation/first render.
     }
 
     @Override
     public void onStart() {
         super.onStart();
         handler.post(tick);
-        refreshFromDisk();
+        refreshFromDiskAsync();
     }
 
     @Override
     public void onStop() {
         super.onStop();
         handler.removeCallbacks(tick);
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        ioExecutor.shutdownNow();
     }
 
     private void render(@NonNull ScraperUiState state) {
@@ -182,36 +194,48 @@ public class MainFragment extends Fragment {
         tvElapsed.setText(String.format("%s %02d:%02d:%02d", "Temps écoulé:", h, m, s));
     }
 
-    private void refreshFromDisk() {
-        try {
-            Context context = getContext();
-            if (context == null) {
-                return;
-            }
-
-            ProgressState ps = ProgressManager.loadProgress(context);
-            if (ps == null) {
-                return;
-            }
-            ps.ensureInitialized();
-
-            ScraperStateRepository repo = ScraperStateRepository.getInstance();
-            repo.setPhase(ps.getCurrentPhase() != null ? ps.getCurrentPhase() : ScrapingPhase.NOT_STARTED);
-
-            int step1 = ps.getCombinedBattles() != null ? 1 : 0;
-            repo.setStep1(step1, 1, ps.getCombinedBattles() != null ? "OK" : "");
-
-            int step2Total = ps.getPendingArenaIds() != null ? ps.getPendingArenaIds().size() : 0;
-            int step2Current = Math.min(step2Total, Math.max(0, ps.getCurrentArenaIndex()));
-            repo.setStep2(step2Current, step2Total, "BattleDetails: " + ps.getBattleDetails().size());
-
-            int step3Total = ps.getPendingPlayerDetailIds() != null ? ps.getPendingPlayerDetailIds().size() : 0;
-            int step3Current = Math.min(step3Total, Math.max(0, ps.getCurrentPlayerDetailIndex()));
-            repo.setStep3(step3Current, step3Total, "Players: " + ps.getPlayers().size());
-
-            repo.setCounts(ps.getBattleDetails().size(), ps.getPlayers().size());
-        } catch (Exception ignored) {
+    private void refreshFromDiskAsync() {
+        final Context context = getContext();
+        if (context == null) {
+            return;
         }
+
+        final int token = ++refreshToken;
+
+        ioExecutor.execute(() -> {
+            try {
+                ProgressState ps = ProgressManager.loadProgress(context);
+                if (ps == null) {
+                    return;
+                }
+                ps.ensureInitialized();
+
+                final ScrapingPhase phase = ps.getCurrentPhase() != null ? ps.getCurrentPhase() : ScrapingPhase.NOT_STARTED;
+                final int step1 = ps.getCombinedBattles() != null ? 1 : 0;
+                final String step1Details = ps.getCombinedBattles() != null ? "OK" : "";
+
+                final int step2Total = ps.getPendingArenaIds() != null ? ps.getPendingArenaIds().size() : 0;
+                final int step2Current = Math.min(step2Total, Math.max(0, ps.getCurrentArenaIndex()));
+                final int battleDetailsCount = ps.getBattleDetails() != null ? ps.getBattleDetails().size() : 0;
+
+                final int step3Total = ps.getPendingPlayerDetailIds() != null ? ps.getPendingPlayerDetailIds().size() : 0;
+                final int step3Current = Math.min(step3Total, Math.max(0, ps.getCurrentPlayerDetailIndex()));
+                final int playersCount = ps.getPlayers() != null ? ps.getPlayers().size() : 0;
+
+                handler.post(() -> {
+                    if (!isAdded() || token != refreshToken) {
+                        return;
+                    }
+                    ScraperStateRepository repo = ScraperStateRepository.getInstance();
+                    repo.setPhase(phase);
+                    repo.setStep1(step1, 1, step1Details);
+                    repo.setStep2(step2Current, step2Total, "BattleDetails: " + battleDetailsCount);
+                    repo.setStep3(step3Current, step3Total, "Players: " + playersCount);
+                    repo.setCounts(battleDetailsCount, playersCount);
+                });
+            } catch (Exception ignored) {
+            }
+        });
     }
 
     private void exportSnapshotAndOpen() {

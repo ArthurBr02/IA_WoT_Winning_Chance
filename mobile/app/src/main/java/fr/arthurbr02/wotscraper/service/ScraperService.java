@@ -97,11 +97,13 @@ public class ScraperService extends Service {
         if (ps != null) {
             startedAtMs = ps.getStartTimeMs();
         }
+        final long startedAtMsFinal = startedAtMs;
         ScraperStateRepository.getInstance().setRunning(true, startedAtMs);
 
         Notification notification = notificationManager.buildOngoing(
                 "WoT Scraper",
                 "Scraping en cours…",
+            startedAtMsFinal,
                 0,
                 0,
                 true
@@ -116,7 +118,7 @@ public class ScraperService extends Service {
                 ScraperStateRepository.getInstance().setPhase(phase);
                 if (preferencesManager.isPhaseNotificationEnabled()) {
                     notificationManager.notifyAlert(ScraperNotificationManager.NOTIFICATION_ID + 1,
-                            notificationManager.buildAlert("WoT Scraper", "Étape: " + phase.name()));
+                            notificationManager.buildInfoAlert("WoT Scraper", "Étape: " + phase.name()));
                 }
             }
 
@@ -125,6 +127,7 @@ public class ScraperService extends Service {
                 Notification updated = notificationManager.buildOngoing(
                         "WoT Scraper",
                         message,
+                    startedAtMsFinal,
                         current,
                         total,
                         total <= 0
@@ -172,7 +175,7 @@ public class ScraperService extends Service {
                 LogManager.getInstance().add(LogLevel.ERROR, (fatal ? "Fatal: " : "Error: ") + e.getMessage());
                 if (preferencesManager.isErrorNotificationEnabled()) {
                     notificationManager.notifyAlert(ScraperNotificationManager.NOTIFICATION_ID + 2,
-                            notificationManager.buildAlert("WoT Scraper", "Erreur: " + e.getClass().getSimpleName()));
+                            notificationManager.buildErrorAlert("WoT Scraper", "Erreur: " + e.getClass().getSimpleName() + "\n" + (e.getMessage() != null ? e.getMessage() : "")));
                 }
             }
 
@@ -187,7 +190,7 @@ public class ScraperService extends Service {
                 ScraperStateRepository.getInstance().setPhase(ScrapingPhase.COMPLETED);
                 if (preferencesManager.isCompleteNotificationEnabled()) {
                     notificationManager.notifyAlert(ScraperNotificationManager.NOTIFICATION_ID + 3,
-                            notificationManager.buildAlert("WoT Scraper", "Scraping terminé"));
+                            notificationManager.buildInfoAlert("WoT Scraper", "Scraping terminé"));
                 }
             }
         };

@@ -6,6 +6,7 @@ import com.google.gson.Gson;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.io.Reader;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
@@ -71,12 +72,15 @@ public class ApiClient {
             if (response.body() == null) {
                 throw new IOException("Empty body for " + url);
             }
-            String body = response.body().string();
-            T parsed = gson.fromJson(body, clazz);
-            if (parsed == null) {
-                throw new IOException("Failed to parse JSON for " + url);
+
+            // Parse in streaming mode to avoid loading the whole response in memory.
+            try (Reader reader = response.body().charStream()) {
+                T parsed = gson.fromJson(reader, clazz);
+                if (parsed == null) {
+                    throw new IOException("Failed to parse JSON for " + url);
+                }
+                return parsed;
             }
-            return parsed;
         }
     }
 

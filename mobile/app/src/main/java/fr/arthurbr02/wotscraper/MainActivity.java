@@ -12,8 +12,10 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentManager;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
+import com.google.android.material.appbar.MaterialToolbar;
 
 import fr.arthurbr02.wotscraper.ui.LogsFragment;
 import fr.arthurbr02.wotscraper.ui.MainFragment;
@@ -25,10 +27,18 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int REQ_POST_NOTIFICATIONS = 1001;
 
+    private static final String TAG_HOME = "tab_home";
+    private static final String TAG_LOGS = "tab_logs";
+    private static final String TAG_EXPORTS = "tab_exports";
+    private static final String TAG_SETTINGS = "tab_settings";
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        MaterialToolbar toolbar = findViewById(R.id.toolbar);
+        setSupportActionBar(toolbar);
 
         requestNotificationsPermissionIfNeeded();
 
@@ -36,19 +46,23 @@ public class MainActivity extends AppCompatActivity {
         bottomNav.setOnItemSelectedListener(item -> {
             int id = item.getItemId();
             if (id == R.id.nav_home) {
-                showFragment(new MainFragment());
+                if (getSupportActionBar() != null) getSupportActionBar().setTitle(R.string.nav_home);
+                showRootTab(TAG_HOME);
                 return true;
             }
             if (id == R.id.nav_logs) {
-                showFragment(new LogsFragment());
+                if (getSupportActionBar() != null) getSupportActionBar().setTitle(R.string.nav_logs);
+                showRootTab(TAG_LOGS);
                 return true;
             }
             if (id == R.id.nav_exports) {
-                showFragment(new ExportsFragment());
+                if (getSupportActionBar() != null) getSupportActionBar().setTitle(R.string.nav_exports);
+                showRootTab(TAG_EXPORTS);
                 return true;
             }
             if (id == R.id.nav_settings) {
-                showFragment(new SettingsFragment());
+                if (getSupportActionBar() != null) getSupportActionBar().setTitle(R.string.nav_settings);
+                showRootTab(TAG_SETTINGS);
                 return true;
             }
             return false;
@@ -80,28 +94,90 @@ public class MainActivity extends AppCompatActivity {
         if (bottomNav != null) {
             bottomNav.setSelectedItemId(R.id.nav_exports);
         }
+        if (getSupportActionBar() != null) getSupportActionBar().setTitle(R.string.nav_exports);
         navigateTo(ExportDetailFragment.newInstance(uri), true);
         return true;
     }
 
     private void showFragment(@NonNull Fragment fragment) {
-        showFragment(fragment, false);
+        showRoot(fragment);
     }
 
     public void navigateTo(@NonNull Fragment fragment, boolean addToBackStack) {
-        showFragment(fragment, addToBackStack);
-    }
-
-    private void showFragment(@NonNull Fragment fragment, boolean addToBackStack) {
-        androidx.fragment.app.FragmentTransaction tx = getSupportFragmentManager()
-                .beginTransaction()
-                .replace(R.id.fragment_container, fragment);
-
-        if (addToBackStack) {
-            tx.addToBackStack(null);
+        if (!addToBackStack) {
+            showRoot(fragment);
+            return;
         }
 
+        FragmentManager fm = getSupportFragmentManager();
+        Fragment current = findVisibleFragment(fm);
+
+        androidx.fragment.app.FragmentTransaction tx = fm.beginTransaction();
+        if (current != null) {
+            tx.hide(current);
+        }
+        tx.add(R.id.fragment_container, fragment);
+        tx.addToBackStack(null);
         tx.commit();
+    }
+
+    private void showRoot(@NonNull Fragment fragment) {
+        // Non-tab root content: replace without keeping old view state.
+        getSupportFragmentManager().popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE);
+        getSupportFragmentManager()
+                .beginTransaction()
+                .replace(R.id.fragment_container, fragment)
+                .commit();
+    }
+
+    private void showRootTab(@NonNull String tag) {
+        FragmentManager fm = getSupportFragmentManager();
+        // Selecting a tab should go back to the root of that tab.
+        fm.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE);
+
+        Fragment home = fm.findFragmentByTag(TAG_HOME);
+        Fragment logs = fm.findFragmentByTag(TAG_LOGS);
+        Fragment exports = fm.findFragmentByTag(TAG_EXPORTS);
+        Fragment settings = fm.findFragmentByTag(TAG_SETTINGS);
+
+        Fragment target = fm.findFragmentByTag(tag);
+        if (target == null) {
+            if (TAG_HOME.equals(tag)) target = new MainFragment();
+            else if (TAG_LOGS.equals(tag)) target = new LogsFragment();
+            else if (TAG_EXPORTS.equals(tag)) target = new ExportsFragment();
+            else if (TAG_SETTINGS.equals(tag)) target = new SettingsFragment();
+        }
+
+        androidx.fragment.app.FragmentTransaction tx = fm.beginTransaction();
+        if (home != null) tx.hide(home);
+        if (logs != null) tx.hide(logs);
+        if (exports != null) tx.hide(exports);
+        if (settings != null) tx.hide(settings);
+
+        if (target != null) {
+            if (target.isAdded()) {
+                tx.show(target);
+            } else {
+                tx.add(R.id.fragment_container, target, tag);
+            }
+        }
+        tx.commit();
+    }
+
+    @NonNull
+    private static Fragment findVisibleFragment(@NonNull FragmentManager fm) {
+        for (Fragment f : fm.getFragments()) {
+            if (f != null && f.isAdded() && !f.isHidden() && f.getView() != null) {
+                return f;
+            }
+        }
+        // Fallback: return any added fragment.
+        for (Fragment f : fm.getFragments()) {
+            if (f != null && f.isAdded() && !f.isHidden()) {
+                return f;
+            }
+        }
+        return null;
     }
 
     private void requestNotificationsPermissionIfNeeded() {
