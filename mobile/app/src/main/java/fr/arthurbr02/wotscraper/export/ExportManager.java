@@ -1,6 +1,7 @@
 package fr.arthurbr02.wotscraper.export;
 
 import android.content.Context;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 
@@ -18,13 +19,22 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class ExportManager {
+
+    private static final String TAG = "ExportManager";
 
     private static final String EXPORT_DIR_NAME = "exports";
     private static final String LATEST_EXPORT_FILE = "export_latest.json";
 
     private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
+
+    private static final ExecutorService ASYNC_EXECUTOR = Executors.newSingleThreadExecutor();
+    private static final Object ASYNC_LOCK = new Object();
+    private static ExportData pendingLatest;
+    private static boolean asyncWorkerRunning = false;
 
     private ExportManager() {
     }
@@ -35,6 +45,42 @@ public class ExportManager {
         File target = new File(dir, LATEST_EXPORT_FILE);
         writeAtomicJson(target, data);
         return target;
+    }
+
+    /**
+     * Non-blocking variant used during scraping loops.
+     * Coalesces multiple calls and only writes the latest snapshot.
+     */
+    public static void exportLatestAsync(@NonNull Context context, @NonNull ExportData snapshot) {
+        final Context appContext = context.getApplicationContext();
+
+        synchronized (ASYNC_LOCK) {
+            pendingLatest = snapshot;
+            if (asyncWorkerRunning) {
+                return;
+            }
+            asyncWorkerRunning = true;
+        }
+
+        ASYNC_EXECUTOR.execute(() -> {
+            while (true) {
+                ExportData next;
+                synchronized (ASYNC_LOCK) {
+                    next = pendingLatest;
+                    pendingLatest = null;
+                    if (next == null) {
+                        asyncWorkerRunning = false;
+                        return;
+                    }
+                }
+
+                try {
+                    exportLatest(appContext, next);
+                } catch (Exception e) {
+                    Log.w(TAG, "Async exportLatest failed", e);
+                }
+            }
+        });
     }
 
     @NonNull

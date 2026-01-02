@@ -1,6 +1,7 @@
 package fr.arthurbr02.wotscraper.scraper.progress;
 
 import android.content.Context;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -18,14 +19,23 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.SyncFailedException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class ProgressManager {
+
+    private static final String TAG = "ProgressManager";
 
     private static final String PROGRESS_FILE = "scraper_progress.json";
     private static final String PROGRESS_BACKUP_FILE = "scraper_progress.backup.json";
     private static final String PROGRESS_TMP_FILE = "scraper_progress.tmp.json";
 
     private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
+
+    private static final ExecutorService ASYNC_EXECUTOR = Executors.newSingleThreadExecutor();
+    private static final Object ASYNC_LOCK = new Object();
+    private static ProgressState pendingAsyncState;
+    private static boolean asyncWorkerRunning = false;
 
     private ProgressManager() {
     }
@@ -69,6 +79,43 @@ public class ProgressManager {
             //noinspection ResultOfMethodCallIgnored
             tmpFile.delete();
         }
+    }
+
+    /**
+     * Non-blocking variant used during scraping loops.
+     * Coalesces multiple calls and only writes the latest snapshot.
+     */
+    public static void saveProgressAsync(@NonNull Context context, @NonNull ProgressState snapshot) {
+        final Context appContext = context.getApplicationContext();
+
+        synchronized (ASYNC_LOCK) {
+            pendingAsyncState = snapshot;
+            if (asyncWorkerRunning) {
+                return;
+            }
+            asyncWorkerRunning = true;
+        }
+
+        ASYNC_EXECUTOR.execute(() -> {
+            while (true) {
+                ProgressState next;
+                synchronized (ASYNC_LOCK) {
+                    next = pendingAsyncState;
+                    pendingAsyncState = null;
+                    if (next == null) {
+                        asyncWorkerRunning = false;
+                        return;
+                    }
+                }
+
+                try {
+                    saveProgress(appContext, next);
+                } catch (Exception e) {
+                    // Best-effort: never crash the scraper for a background persistence issue.
+                    Log.w(TAG, "Async saveProgress failed", e);
+                }
+            }
+        });
     }
 
     @Nullable

@@ -377,16 +377,17 @@ public class ScraperEngine {
         }
     }
 
-    private void persist(@NonNull ProgressState state) throws IOException {
-        ProgressManager.saveProgress(context, state);
+    private void persist(@NonNull ProgressState state) {
+        ProgressState snapshot = state.snapshot();
 
-        ExportData partial = new ExportData(state.getCombinedBattles(), state.getBattleDetails(), state.getPlayers());
+        // Non-blocking persistence so scraping keeps progressing.
+        ProgressManager.saveProgressAsync(context, snapshot);
+
+        ExportData partial = new ExportData(snapshot.getCombinedBattles(), snapshot.getBattleDetails(), snapshot.getPlayers());
         if (preferences.isAutoExportEnabled()) {
-            try {
-                ExportManager.exportLatest(context, partial);
-            } catch (IOException ignored) {
-            }
+            ExportManager.exportLatestAsync(context, partial);
         }
+
         callback.onDataCollected(partial);
     }
 

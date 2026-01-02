@@ -1,5 +1,7 @@
 package fr.arthurbr02.wotscraper.scraper.progress;
 
+import androidx.annotation.NonNull;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -105,6 +107,44 @@ public class ProgressState {
         if (totalPlayersToFetch < 0) {
             totalPlayersToFetch = 0;
         }
+    }
+
+    /**
+     * Creates a persistence snapshot so background JSON writes don't iterate over
+     * collections being mutated by the scraping thread.
+     */
+    @NonNull
+    public ProgressState snapshot() {
+        ProgressState copy = new ProgressState();
+
+        copy.sessionId = this.sessionId;
+        copy.initialPlayerId = this.initialPlayerId;
+        copy.startTimeMs = this.startTimeMs;
+        copy.lastUpdateTimeMs = this.lastUpdateTimeMs;
+        copy.currentPhase = this.currentPhase;
+        copy.combinedBattles = this.combinedBattles;
+
+        copy.pendingArenaIds = this.pendingArenaIds != null ? new ArrayList<>(this.pendingArenaIds) : new ArrayList<>();
+        copy.currentArenaIndex = this.currentArenaIndex;
+        copy.queuedArenaIds = this.queuedArenaIds != null ? new HashSet<>(this.queuedArenaIds) : new HashSet<>();
+
+        copy.battleDetails = this.battleDetails != null ? new ArrayList<>(this.battleDetails) : new ArrayList<>();
+        copy.processedArenaIds = this.processedArenaIds != null ? new HashSet<>(this.processedArenaIds) : new HashSet<>();
+
+        copy.processedPlayerIds = this.processedPlayerIds != null ? new HashSet<>(this.processedPlayerIds) : new HashSet<>();
+        copy.pendingPlayerIds = this.pendingPlayerIds != null ? new ArrayList<>(this.pendingPlayerIds) : new ArrayList<>();
+
+        copy.players = this.players != null ? new ArrayList<>(this.players) : new ArrayList<>();
+
+        copy.pendingPlayerDetailIds = this.pendingPlayerDetailIds != null ? new ArrayList<>(this.pendingPlayerDetailIds) : new ArrayList<>();
+        copy.processedPlayerDetailIds = this.processedPlayerDetailIds != null ? new HashSet<>(this.processedPlayerDetailIds) : new HashSet<>();
+        copy.currentPlayerDetailIndex = this.currentPlayerDetailIndex;
+
+        copy.currentPlayerIndex = this.currentPlayerIndex;
+        copy.totalPlayersToFetch = this.totalPlayersToFetch;
+
+        copy.ensureInitialized();
+        return copy;
     }
 
     public String getSessionId() {

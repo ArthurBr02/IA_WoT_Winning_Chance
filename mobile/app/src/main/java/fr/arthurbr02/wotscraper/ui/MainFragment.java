@@ -28,6 +28,7 @@ import fr.arthurbr02.wotscraper.scraper.ScrapingPhase;
 import fr.arthurbr02.wotscraper.scraper.progress.ProgressManager;
 import fr.arthurbr02.wotscraper.scraper.progress.ProgressState;
 import fr.arthurbr02.wotscraper.service.ScraperService;
+import fr.arthurbr02.wotscraper.util.PreferencesManager;
 
 public class MainFragment extends Fragment {
 
@@ -128,6 +129,18 @@ public class MainFragment extends Fragment {
     public void onStart() {
         super.onStart();
         handler.post(tick);
+        
+        // Force immediate sync of running state from preferences before async disk load
+        Context context = getContext();
+        if (context != null) {
+            PreferencesManager prefs = new PreferencesManager(context);
+            if (prefs.wasScraperRunning()) {
+                ProgressState ps = ProgressManager.loadProgress(context);
+                long startedAt = ps != null ? ps.getStartTimeMs() : System.currentTimeMillis();
+                ScraperStateRepository.getInstance().setRunning(true, startedAt);
+            }
+        }
+        
         refreshFromDiskAsync();
     }
 
@@ -204,11 +217,24 @@ public class MainFragment extends Fragment {
 
         ioExecutor.execute(() -> {
             try {
+                PreferencesManager preferences = new PreferencesManager(context);
+                final boolean running = preferences.wasScraperRunning();
+
                 ProgressState ps = ProgressManager.loadProgress(context);
                 if (ps == null) {
+                    // The service may be running but the progress file isn't readable yet.
+                    handler.post(() -> {
+                        if (!isAdded() || token != refreshToken) {
+                            return;
+                        }
+                        long startedAt = running ? System.currentTimeMillis() : 0L;
+                        ScraperStateRepository.getInstance().setRunning(running, startedAt);
+                    });
                     return;
                 }
                 ps.ensureInitialized();
+
+                final long startedAtMs = ps.getStartTimeMs();
 
                 final ScrapingPhase phase = ps.getCurrentPhase() != null ? ps.getCurrentPhase() : ScrapingPhase.NOT_STARTED;
                 final int step1 = ps.getCombinedBattles() != null ? 1 : 0;
@@ -227,6 +253,7 @@ public class MainFragment extends Fragment {
                         return;
                     }
                     ScraperStateRepository repo = ScraperStateRepository.getInstance();
+                    repo.setRunning(running, running ? startedAtMs : 0L);
                     repo.setPhase(phase);
                     repo.setStep1(step1, 1, step1Details);
                     repo.setStep2(step2Current, step2Total, "BattleDetails: " + battleDetailsCount);

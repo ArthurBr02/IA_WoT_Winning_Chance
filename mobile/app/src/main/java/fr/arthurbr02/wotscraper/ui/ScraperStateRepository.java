@@ -32,7 +32,12 @@ public class ScraperStateRepository {
     }
 
     public void setRunning(boolean running, long startedAtMs) {
-        state.postValue(getCurrent().withRunning(running, startedAtMs));
+        ScraperUiState next = getCurrent().withRunning(running, startedAtMs);
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            state.setValue(next);
+        } else {
+            state.postValue(next);
+        }
     }
 
     public void setPhase(@NonNull ScrapingPhase phase) {

@@ -87,6 +87,14 @@ public class ScraperService extends Service {
 
     public void startScraper() {
         if (isRunning) {
+            // The service may already be running while the UI process just (re)attached.
+            // Ensure the UI state is refreshed.
+            long startedAtMs = System.currentTimeMillis();
+            ProgressState ps = ProgressManager.loadProgress(this);
+            if (ps != null) {
+                startedAtMs = ps.getStartTimeMs();
+            }
+            ScraperStateRepository.getInstance().setRunning(true, startedAtMs);
             return;
         }
         isRunning = true;
