@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WoT Scraper</string>
+
+    <string name="nav_home">Accueil</string>
+    <string name="nav_logs">Logs</string>
+    <string name="nav_exports">Exports</string>
+    <string name="nav_settings">Paramètres</string>
+
+    <string name="action_start">START</string>
+    <string name="action_stop">STOP</string>
+
+    <string name="action_view_logs">Voir logs</string>
+    <string name="action_export">Export</string>
+    <string name="action_reset">Reset</string>
+
+    <string name="exports_empty">Aucun export pour le moment</string>
+    <string name="export_share">Partager</string>
+    <string name="export_open">Ouvrir</string>
+    <string name="export_delete">Supprimer</string>
+
+    <string name="step1_title">Étape 1 : CombinedBattles</string>
+    <string name="step2_title">Étape 2 : BattleDetails</string>
+    <string name="step3_title">Étape 3 : Players</string>
+
+    <string name="setting_request_delay">Délai entre requêtes</string>
+    <string name="setting_timeout">Timeout connexion</string>
+    <string name="setting_combined_battles_page_size">Taille page CombinedBattles</string>
+    <string name="setting_players_count">Nombre de joueurs</string>
+    <string name="setting_initial_player">ID joueur initial</string>
+    <string name="setting_save_frequency">Fréquence sauvegarde</string>
+    <string name="setting_auto_export">Export automatique</string>
+    <string name="setting_notif_complete">Notif. de fin</string>
+    <string name="setting_notif_error">Notif. erreur</string>
+    <string name="setting_notif_phase">Notif. etape</string>
+
+    <string name="status_running">État: En cours…</string>
+    <string name="status_stopped">État: Arrêté</string>
+
+    <string name="notification_channel_name">WoT Scraper</string>
+    <string name="notification_channel_desc">Notifications du scraping en arrière-plan</string>
+</resources>
