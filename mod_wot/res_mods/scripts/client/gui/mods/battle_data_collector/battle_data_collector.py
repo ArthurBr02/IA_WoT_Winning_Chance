@@ -652,36 +652,140 @@ class BattleDataCollector(object):
     def _sendTeamChatMessage(self, msg):
         """Envoie un message dans le chat d'équipe (visible par tous)"""
         try:
-            # Méthode 1: Via MessengerEntry (API moderne)
+            if msg is None:
+                return
+
+            # Normaliser en unicode (WoT client est en Py2.7)
+            if not isinstance(msg, unicode):
+                try:
+                    msg = unicode(msg, 'utf-8')
+                except Exception:
+                    try:
+                        msg = unicode(str(msg))
+                    except Exception:
+                        return
+
+            def _try_call(target, method_name, args_variants, label):
+                try:
+                    fn = getattr(target, method_name, None)
+                    if not callable(fn):
+                        return False
+                    for args in args_variants:
+                        try:
+                            fn(*args)
+                            print(u"[BattleDataCollector] Message envoyé ({}.{})".format(label, method_name))
+                            return True
+                        except TypeError:
+                            continue
+                        except Exception:
+                            continue
+                except Exception:
+                    return False
+                return False
+
+            msg_utf8 = None
             try:
-                from messenger import MessengerEntry
-                from messenger.proto.events import g_messengerEvents
-                from gui.shared import g_eventBus, events, EVENT_BUS_SCOPE
-                
-                if MessengerEntry.g_instance:
-                    controller = MessengerEntry.g_instance.protos.BW_CHAT2.channelsCtrl
-                    if controller:
-                        # Envoyer au canal d'équipe
-                        controller.sendMessage(msg.encode('utf-8') if isinstance(msg, unicode) else msg)
-                        print("[BattleDataCollector] Message envoyé (MessengerEntry): {}".format(msg))
+                msg_utf8 = msg.encode('utf-8')
+            except Exception:
+                msg_utf8 = msg
+
+            # Candidats de canaux "team" (selon versions WoT)
+            team_channels = []
+            try:
+                from gui.battle_control.battle_constants import BATTLE_CHAT_CHANNELS
+                try:
+                    team_channels.append(BATTLE_CHAT_CHANNELS.TEAM)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            # Fallbacks usuels (id inconnus selon client)
+            team_channels.extend([1, 0, 2])
+
+            # Variantes d'arguments possibles
+            msg_args = [(msg,), (msg_utf8,)]
+            chan_msg_args = []
+            for ch in team_channels:
+                chan_msg_args.extend([
+                    (ch, msg),
+                    (ch, msg_utf8),
+                    (ch, msg, True),
+                    (ch, msg_utf8, True),
+                ])
+
+            # Méthode 1: sessionProvider chatCommands (battle)
+            try:
+                from gui.battle_control import g_sessionProvider
+                sp = g_sessionProvider
+                shared = getattr(sp, 'shared', None)
+                chat_cmd = getattr(shared, 'chatCommands', None) if shared else None
+                if chat_cmd:
+                    if (
+                        _try_call(chat_cmd, 'sendTeamMessage', msg_args, 'sessionProvider.chatCommands')
+                        or _try_call(chat_cmd, 'sendChatMessage', chan_msg_args + msg_args, 'sessionProvider.chatCommands')
+                        or _try_call(chat_cmd, 'sendMessage', chan_msg_args + msg_args, 'sessionProvider.chatCommands')
+                    ):
                         return
             except Exception as e1:
-                print("[BattleDataCollector] MessengerEntry failed: {}".format(str(e1)))
-            
-            # Méthode 2: Via base.sendCommand
+                print("[BattleDataCollector] g_sessionProvider chat failed: {}".format(str(e1)))
+
+            # Méthode 2: avatar.guiSessionProvider.shared.chatCommands
             try:
                 avatar = BigWorld.player()
-                if avatar and hasattr(avatar, 'base'):
-                    # Commande chat d'équipe
-                    avatar.base.sendCommand(1, msg.encode('utf-8') if isinstance(msg, unicode) else msg)
-                    print("[BattleDataCollector] Message envoyé (base.sendCommand): {}".format(msg))
-                    return
+                gsp = getattr(avatar, 'guiSessionProvider', None) if avatar else None
+                shared = getattr(gsp, 'shared', None) if gsp else None
+                chat_cmd = getattr(shared, 'chatCommands', None) if shared else None
+                if chat_cmd:
+                    if (
+                        _try_call(chat_cmd, 'sendTeamMessage', msg_args, 'avatar.guiSessionProvider.chatCommands')
+                        or _try_call(chat_cmd, 'sendChatMessage', chan_msg_args + msg_args, 'avatar.guiSessionProvider.chatCommands')
+                        or _try_call(chat_cmd, 'sendMessage', chan_msg_args + msg_args, 'avatar.guiSessionProvider.chatCommands')
+                    ):
+                        return
             except Exception as e2:
-                print("[BattleDataCollector] base.sendCommand failed: {}".format(str(e2)))
+                print("[BattleDataCollector] guiSessionProvider chat failed: {}".format(str(e2)))
 
-            # Pas de fallback: si on ne peut pas envoyer au chat, on log seulement.
+            # Méthode 3: MessengerEntry (selon versions, la structure interne varie)
+            try:
+                from messenger import MessengerEntry
+                inst = getattr(MessengerEntry, 'g_instance', None)
+                if inst:
+                    protos = getattr(inst, 'protos', None)
+                    bw_chat2 = getattr(protos, 'BW_CHAT2', None) if protos else None
+                    if bw_chat2:
+                        # Tenter directement sur l'objet, puis sur des sous-objets qui exposent send*.
+                        if (
+                            _try_call(bw_chat2, 'sendTeamMessage', msg_args, 'MessengerEntry.BW_CHAT2')
+                            or _try_call(bw_chat2, 'sendChatMessage', chan_msg_args + msg_args, 'MessengerEntry.BW_CHAT2')
+                            or _try_call(bw_chat2, 'sendMessage', chan_msg_args + msg_args, 'MessengerEntry.BW_CHAT2')
+                        ):
+                            return
+
+                        # Introspection légère: trouver un ctrl qui sait envoyer un message
+                        try:
+                            attrs = [a for a in dir(bw_chat2) if 'ctrl' in a.lower() or 'chat' in a.lower() or 'channel' in a.lower()]
+                        except Exception:
+                            attrs = []
+
+                        for a in attrs:
+                            try:
+                                candidate = getattr(bw_chat2, a, None)
+                            except Exception:
+                                candidate = None
+                            if not candidate:
+                                continue
+
+                            if (
+                                _try_call(candidate, 'sendTeamMessage', msg_args, u'MessengerEntry.BW_CHAT2.{}'.format(a))
+                                or _try_call(candidate, 'sendChatMessage', chan_msg_args + msg_args, u'MessengerEntry.BW_CHAT2.{}'.format(a))
+                                or _try_call(candidate, 'sendMessage', chan_msg_args + msg_args, u'MessengerEntry.BW_CHAT2.{}'.format(a))
+                            ):
+                                return
+            except Exception as e3:
+                print("[BattleDataCollector] MessengerEntry failed: {}".format(str(e3)))
+
             print("[BattleDataCollector] Impossible d'envoyer au chat d'équipe sur ce client")
-                
+
         except Exception as e:
             print("[BattleDataCollector] Erreur envoi chat: {}".format(str(e)))
 
