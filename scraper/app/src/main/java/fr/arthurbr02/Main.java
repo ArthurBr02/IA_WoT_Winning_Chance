@@ -157,6 +157,12 @@ public class Main {
         // Sauvegarder l'état initial
         ProgressManager.saveProgress(state);
 
+        // Export initial des premières données
+        logger.info("Exporting initial data");
+        ExportService.exportCurrentData(
+            new ExportData(null, state.getBattleDetails(), state.getPlayers())
+        );
+
         return state;
     }
 
@@ -252,11 +258,29 @@ public class Main {
 
         logger.info("Total unique players to fetch details for: {}", allPlayerIds.size());
 
+        // Export avant de récupérer les détails des joueurs (phase longue)
+        logger.info("Exporting data before fetching player details");
+        ExportService.exportCurrentData(
+            new ExportData(null, state.getBattleDetails(), state.getPlayers())
+        );
+
         // Récupérer les informations détaillées des joueurs traités
         logger.info("Fetching detailed player information");
         List<fr.arthurbr02.player.Player> players =
-            PlayerService.fetchPlayers(new ArrayList<>(allPlayerIds), playerNames);
+            PlayerService.fetchPlayers(new ArrayList<>(allPlayerIds), playerNames, (currentPlayers) -> {
+                // Callback appelé tous les 200 joueurs
+                state.setPlayers(currentPlayers);
+                ExportService.exportCurrentData(
+                    new ExportData(null, state.getBattleDetails(), currentPlayers)
+                );
+            });
         state.setPlayers(players);
+
+        // Export après la récupération des détails des joueurs
+        logger.info("Exporting data after fetching player details");
+        ExportService.exportCurrentData(
+            new ExportData(null, state.getBattleDetails(), state.getPlayers())
+        );
 
         // Sauvegarde finale
         ProgressManager.saveProgress(state);

@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.*;
 
 import static fr.arthurbr02.battledetail.BattleDetailService.fetchBattleDetail;
 
@@ -20,6 +21,7 @@ public class CombinedBattlesService {
     private static final Logger logger = LoggerFactory.getLogger(CombinedBattlesService.class);
     private static final String API_URL = "https://api.tomato.gg/api/player/combined-battles/{player_id}?page=0&days=36500&pageSize=10&sortBy=battle_time&sortDirection=desc&platoon=in-and-outside-platoon&spawn=all&won=all&classes=&nations=&roles=&tiers=&tankType=all";
     private static final int MAX_429_RETRIES = 1000;
+    private static final int MIN_THREAD_COUNT = 8;
 
     public static CombinedBattles fetchCombinedBattles(String playerId) {
         String url = API_URL.replace("{player_id}", playerId);
@@ -73,11 +75,46 @@ public class CombinedBattlesService {
     public static List<BattleDetail> fetchBattleDetails(List<Long> arenaIds) {
         List<BattleDetail> battleDetails = new ArrayList<>();
 
+        if (arenaIds.isEmpty()) {
+            return battleDetails;
+        }
+
+        // Créer un ExecutorService avec un nombre de threads = max(8, nombre de CPUs)
+        int threadCount = Math.max(MIN_THREAD_COUNT, Runtime.getRuntime().availableProcessors());
+        logger.info("Using {} threads for fetching {} battle details (min: {})", threadCount, arenaIds.size(), MIN_THREAD_COUNT);
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        List<Future<BattleDetail>> futures = new ArrayList<>();
+
+        // Soumettre toutes les tâches
         for (Long arenaId : arenaIds) {
-            BattleDetail detail = fetchBattleDetail(arenaId);
-            if (detail != null) {
-                battleDetails.add(detail);
+            Future<BattleDetail> future = executor.submit(() -> fetchBattleDetail(arenaId));
+            futures.add(future);
+        }
+
+        // Récupérer les résultats
+        for (Future<BattleDetail> future : futures) {
+            try {
+                BattleDetail detail = future.get();
+                if (detail != null) {
+                    battleDetails.add(detail);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.error("Thread interrupted while fetching BattleDetail", e);
+            } catch (ExecutionException e) {
+                logger.error("Error fetching BattleDetail", e.getCause());
             }
+        }
+
+        // Arrêter l'executor
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
         }
 
         return battleDetails;

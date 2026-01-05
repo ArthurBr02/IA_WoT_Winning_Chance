@@ -16,8 +16,21 @@ from typing import Optional
 
 # --- CONFIGURATION ---
 DATA_PATH = "./data"  # Ton dossier
-FEATURE_COLS = ['battles', 'overallWN8', 'overallWNX', 'winrate', 'dpg',
-                'assist', 'frags', 'survival', 'spots', 'cap', 'def', 'xp', 'kd']
+# Player numeric features (per-row). Strings are handled separately (embeddings).
+# Note: tankId is intentionally ignored (indicative only, not a ranking feature).
+PLAYER_NUMERIC_COLS = [
+    'battles', 'overallWN8', 'overallWNX', 'winrate', 'dpg',
+    'assist', 'frags', 'survival', 'spots', 'cap', 'def', 'xp', 'kd',
+    # tank-level stats
+    'tankWN8', 'tankWNX', 'tankWinrate', 'tankDpg', 'tankAssist', 'tankKpg',
+    'tankDmgRatio', 'tankSurvival', 'tankXp', 'tankHitratio', 'tankSpots',
+    'tankArmoreff', 'tankMoe', 'tankMastery', 'tankKd',
+]
+
+PLAYER_CATEGORICAL_COLS = ['tankRole', 'tankVehicleClass', 'tankNation']
+
+# Backward-compatible alias (old name used in several places)
+FEATURE_COLS = PLAYER_NUMERIC_COLS
 MAX_PLAYERS = 15
 BATCH_SIZE = 64
 LEARNING_RATE = 0.0001
@@ -53,6 +66,11 @@ PRINT_EVERY = 1
 # Dimension de l'embedding (vecteur qui représente la map)
 # Une taille de 8 à 16 suffit généralement pour une cinquantaine de maps.
 MAP_EMBEDDING_DIM = 16
+
+# Categorical embeddings (per-player)
+ROLE_EMBEDDING_DIM = 4
+VEHICLE_CLASS_EMBEDDING_DIM = 4
+NATION_EMBEDDING_DIM = 4
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Hardware: {device}")
@@ -90,8 +108,17 @@ def _safe_topk_mean(s: pd.Series, k: int) -> float:
 
 def compute_global_features(team1_df: pd.DataFrame, team2_df: pd.DataFrame) -> np.ndarray:
     """Compute engineered global features for a match: (team1 - team2)."""
+    needed = ['overallWN8', 'winrate', 'battles', 'dpg', 'xp']
+    team1_df = _ensure_columns(team1_df, needed, default=0.0)
+    team2_df = _ensure_columns(team2_df, needed, default=0.0)
+
     t1 = team1_df.sort_values('overallWN8', ascending=False)
     t2 = team2_df.sort_values('overallWN8', ascending=False)
+
+    # Ensure numeric operations are safe
+    for c in needed:
+        t1[c] = pd.to_numeric(t1[c], errors='coerce').fillna(0.0)
+        t2[c] = pd.to_numeric(t2[c], errors='coerce').fillna(0.0)
 
     delta_mean_wn8 = float(t1['overallWN8'].mean() - t2['overallWN8'].mean())
     delta_mean_wr = float(t1['winrate'].mean() - t2['winrate'].mean())
@@ -117,31 +144,86 @@ def compute_global_features(team1_df: pd.DataFrame, team2_df: pd.DataFrame) -> n
 # On le remplira lors du chargement des données.
 map_to_idx = {}
 
+# Categorical vocabularies (0 reserved for PAD/UNK)
+role_to_idx = {}
+vehicle_class_to_idx = {}
+nation_to_idx = {}
 
-def get_padded_team_matrix(team_df):
-    """Trie et pad les joueurs -> (MAX_PLAYERS, num_features)."""
+
+def _cat_to_index(value, mapping: dict) -> int:
+    """Maps a raw categorical value to an integer index.
+
+    Index 0 is reserved for PAD/UNK.
+    New categories discovered during training are added with indices starting at 1.
+    """
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return 0
+    s = str(value).strip()
+    if s == "" or s.lower() in {"null", "none", "nan"}:
+        return 0
+    if s not in mapping:
+        mapping[s] = len(mapping) + 1
+    return int(mapping[s])
+
+
+def _ensure_columns(df: pd.DataFrame, cols: list[str], default=0.0) -> pd.DataFrame:
+    """Ensure columns exist; if missing, create them with a default value."""
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        for c in missing:
+            df[c] = default
+    return df
+
+
+def get_padded_team_data(team_df: pd.DataFrame):
+    """Sort players and pad/truncate to MAX_PLAYERS.
+
+    Returns:
+      - numeric_stats: (MAX_PLAYERS, num_numeric_features)
+      - cat_indices: (MAX_PLAYERS, 3) for (role, vehicleClass, nation)
+    """
+    global role_to_idx, vehicle_class_to_idx, nation_to_idx
+
+    team_df = _ensure_columns(team_df, PLAYER_NUMERIC_COLS, default=0.0)
+    team_df = _ensure_columns(team_df, PLAYER_CATEGORICAL_COLS, default=None)
+
     sorted_team = team_df.sort_values(by='overallWN8', ascending=False)
-    stats = sorted_team[FEATURE_COLS].to_numpy(dtype=np.float32)
+
+    numeric = sorted_team[PLAYER_NUMERIC_COLS].copy()
+    numeric = numeric.apply(pd.to_numeric, errors='coerce').fillna(0.0)
+    stats = numeric.to_numpy(dtype=np.float32, copy=False)
+
+    # Categories (string/object) -> indices
+    roles = [_cat_to_index(v, role_to_idx) for v in sorted_team['tankRole'].tolist()]
+    vclasses = [_cat_to_index(v, vehicle_class_to_idx) for v in sorted_team['tankVehicleClass'].tolist()]
+    nations = [_cat_to_index(v, nation_to_idx) for v in sorted_team['tankNation'].tolist()]
+    cats = np.stack([roles, vclasses, nations], axis=1).astype(np.int64, copy=False)
 
     num_players = stats.shape[0]
     if num_players < MAX_PLAYERS:
-        padding = np.zeros((MAX_PLAYERS - num_players, len(FEATURE_COLS)), dtype=np.float32)
-        full_team = np.vstack([stats, padding])
+        padding_stats = np.zeros((MAX_PLAYERS - num_players, len(PLAYER_NUMERIC_COLS)), dtype=np.float32)
+        stats_full = np.vstack([stats, padding_stats])
+        padding_cats = np.zeros((MAX_PLAYERS - num_players, 3), dtype=np.int64)
+        cats_full = np.vstack([cats, padding_cats])
     elif num_players > MAX_PLAYERS:
-        full_team = stats[:MAX_PLAYERS, :]
+        stats_full = stats[:MAX_PLAYERS, :]
+        cats_full = cats[:MAX_PLAYERS, :]
     else:
-        full_team = stats
-    return full_team
+        stats_full = stats
+        cats_full = cats
+
+    return stats_full, cats_full
 
 
 def load_data(path):
-    global map_to_idx
+    global map_to_idx, role_to_idx, vehicle_class_to_idx, nation_to_idx
     files = sorted(glob.glob(os.path.join(path, "*.csv")))
     print(f"Lecture de {len(files)} fichiers...")
 
     X_stats_list = []
     X_maps_list = []
     X_global_list = []
+    X_cats_list = []
     y_list = []
 
     # Pour construire l'index des maps
@@ -149,7 +231,20 @@ def load_data(path):
 
     for f in files:
         try:
-            df = pd.read_csv(f, sep=';', decimal=',')
+            df = pd.read_csv(
+                f,
+                sep=';',
+                decimal=',',
+                na_values=['null', 'NULL', 'None', 'none', 'nan', 'NaN', ''],
+                keep_default_na=True,
+            )
+
+            # Robust typing for key columns
+            if 'spawn' in df.columns:
+                df['spawn'] = pd.to_numeric(df['spawn'], errors='coerce')
+            if 'target' in df.columns:
+                df['target'] = pd.to_numeric(df['target'], errors='coerce')
+
             t1 = df[df['spawn'] == 1]
             t2 = df[df['spawn'] == 2]
 
@@ -168,19 +263,21 @@ def load_data(path):
             map_index = map_to_idx[raw_map_id]
 
             # --- TRAITEMENT DES JOUEURS ---
-            mat1 = get_padded_team_matrix(t1)
-            mat2 = get_padded_team_matrix(t2)
+            mat1, cat1 = get_padded_team_data(t1)
+            mat2, cat2 = get_padded_team_data(t2)
 
             # Shape: (2*MAX_PLAYERS, num_features) = (30, 13)
             match_stats = np.vstack([mat1, mat2]).astype(np.float32, copy=False)
+            match_cats = np.vstack([cat1, cat2]).astype(np.int64, copy=False)
 
-            target = t1['target'].iloc[0]
+            target = int(t1['target'].iloc[0])
 
             global_feats = compute_global_features(t1, t2)
 
             X_stats_list.append(match_stats)
             X_maps_list.append(map_index)
             X_global_list.append(global_feats)
+            X_cats_list.append(match_cats)
             y_list.append(target)
 
         except Exception as e:
@@ -188,7 +285,17 @@ def load_data(path):
             continue
 
     print(f"Nombre de maps uniques trouvées : {len(map_to_idx)}")
-    return np.array(X_stats_list), np.array(X_maps_list), np.array(X_global_list), np.array(y_list)
+    print(
+        "Vocabulaires catégories | "
+        f"roles={len(role_to_idx)} | vehicleClass={len(vehicle_class_to_idx)} | nation={len(nation_to_idx)}"
+    )
+    return (
+        np.array(X_stats_list),
+        np.array(X_maps_list),
+        np.array(X_global_list),
+        np.array(X_cats_list),
+        np.array(y_list),
+    )
 
 
 # --- 2. DATASET MODIFIÉ ---
@@ -199,6 +306,7 @@ class WotDataset(Dataset):
         X_stats,
         X_maps,
         X_global,
+        X_cats,
         y,
         scaler=None,
         global_scaler=None,
@@ -212,6 +320,13 @@ class WotDataset(Dataset):
         # X_stats expected shape: (N, 2*MAX_PLAYERS, num_features)
         if X_stats.ndim != 3:
             raise ValueError(f"X_stats must be 3D (N, 2*MAX_PLAYERS, num_features), got shape={X_stats.shape}")
+
+        if X_cats is None:
+            raise ValueError("X_cats is required with the new dataset format (categorical tank fields).")
+        if X_cats.ndim != 3 or X_cats.shape[1] != X_stats.shape[1] or X_cats.shape[2] != 3:
+            raise ValueError(
+                f"X_cats must be (N, 2*MAX_PLAYERS, 3), got shape={getattr(X_cats, 'shape', None)}"
+            )
 
         n = X_stats.shape[0]
         flat = X_stats.reshape(n, -1)
@@ -233,19 +348,20 @@ class WotDataset(Dataset):
         grid = flat.reshape(n, 1, X_stats.shape[1], X_stats.shape[2]).astype(np.float32, copy=False)
         self.X_stats = torch.tensor(grid, dtype=torch.float32)
         self.X_global = torch.tensor(global_scaled.astype(np.float32, copy=False), dtype=torch.float32)
+        self.X_cats = torch.tensor(X_cats.astype(np.int64, copy=False), dtype=torch.long)
 
     def __len__(self):
         return len(self.y)
 
     def __getitem__(self, idx):
         # On retourne un tuple : (Stats, Map), Label
-        return (self.X_stats[idx], self.maps[idx], self.X_global[idx]), self.y[idx]
+        return (self.X_stats[idx], self.maps[idx], self.X_global[idx], self.X_cats[idx]), self.y[idx]
 
 
 # --- 3. MODÈLE HYBRIDE (Stats + Embedding) ---
 
 class WinPredictorCNNWithMap(nn.Module):
-    def __init__(self, num_maps: int):
+    def __init__(self, num_maps: int, num_roles: int, num_vehicle_classes: int, num_nations: int):
         super().__init__()
 
         if num_maps <= 0:
@@ -253,6 +369,11 @@ class WinPredictorCNNWithMap(nn.Module):
 
         # 1) Map embedding
         self.map_embedding = nn.Embedding(num_embeddings=num_maps, embedding_dim=MAP_EMBEDDING_DIM)
+
+        # 1b) Per-player categorical embeddings, pooled to a fixed-size vector
+        self.role_emb = nn.Embedding(num_embeddings=max(1, num_roles), embedding_dim=ROLE_EMBEDDING_DIM)
+        self.vclass_emb = nn.Embedding(num_embeddings=max(1, num_vehicle_classes), embedding_dim=VEHICLE_CLASS_EMBEDDING_DIM)
+        self.nation_emb = nn.Embedding(num_embeddings=max(1, num_nations), embedding_dim=NATION_EMBEDDING_DIM)
 
         # 2) CNN stats encoder: input (B, 1, 2*MAX_PLAYERS, num_features)
         self.stats_cnn = nn.Sequential(
@@ -281,7 +402,8 @@ class WinPredictorCNNWithMap(nn.Module):
         )
 
         stats_feat_dim = 128
-        combined_input_size = stats_feat_dim + MAP_EMBEDDING_DIM + len(GLOBAL_FEATURES)
+        cat_feat_dim = ROLE_EMBEDDING_DIM + VEHICLE_CLASS_EMBEDDING_DIM + NATION_EMBEDDING_DIM
+        combined_input_size = stats_feat_dim + MAP_EMBEDDING_DIM + len(GLOBAL_FEATURES) + cat_feat_dim
 
         self.head = nn.Sequential(
             nn.Linear(combined_input_size, 128),
@@ -290,13 +412,38 @@ class WinPredictorCNNWithMap(nn.Module):
             nn.Linear(128, 1)
         )
 
-    def forward(self, x_stats_grid: torch.Tensor, x_map: torch.Tensor, x_global: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self,
+        x_stats_grid: torch.Tensor,
+        x_map: torch.Tensor,
+        x_global: Optional[torch.Tensor] = None,
+        x_cats: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         # x_stats_grid: (B, 1, H, W)
         stats_feat = self.stats_cnn(x_stats_grid).flatten(1)
         embs = self.map_embedding(x_map)
         if x_global is None:
             x_global = torch.zeros((stats_feat.size(0), len(GLOBAL_FEATURES)), device=stats_feat.device, dtype=stats_feat.dtype)
-        combined = torch.cat([stats_feat, embs, x_global], dim=1)
+        if x_cats is None:
+            cat_feat = torch.zeros(
+                (stats_feat.size(0), ROLE_EMBEDDING_DIM + VEHICLE_CLASS_EMBEDDING_DIM + NATION_EMBEDDING_DIM),
+                device=stats_feat.device,
+                dtype=stats_feat.dtype,
+            )
+        else:
+            # x_cats: (B, 2*MAX_PLAYERS, 3) -> average pooling over players (ignores padding=0)
+            roles = x_cats[:, :, 0]
+            vclasses = x_cats[:, :, 1]
+            nations = x_cats[:, :, 2]
+            mask = (x_cats.sum(dim=-1) > 0).float().unsqueeze(-1)  # (B, P, 1)
+            denom = mask.sum(dim=1).clamp_min(1.0)
+            r = self.role_emb(roles)
+            vc = self.vclass_emb(vclasses)
+            na = self.nation_emb(nations)
+            pooled = ((torch.cat([r, vc, na], dim=-1) * mask).sum(dim=1) / denom)
+            cat_feat = pooled
+
+        combined = torch.cat([stats_feat, embs, x_global, cat_feat], dim=1)
         return self.head(combined)
 
 class AttentionPooling(nn.Module):
@@ -325,13 +472,21 @@ class AttentionPooling(nn.Module):
 
 
 class WinPredictorAttention(nn.Module):
-    def __init__(self, num_maps, num_features):
+    def __init__(self, num_maps, num_features, num_roles: int, num_vehicle_classes: int, num_nations: int):
         super().__init__()
         self.map_emb = nn.Embedding(num_maps, MAP_EMBEDDING_DIM)
 
+        # Per-player categorical embeddings (concatenated to numeric features)
+        self.role_emb = nn.Embedding(num_embeddings=max(1, num_roles), embedding_dim=ROLE_EMBEDDING_DIM)
+        self.vclass_emb = nn.Embedding(num_embeddings=max(1, num_vehicle_classes), embedding_dim=VEHICLE_CLASS_EMBEDDING_DIM)
+        self.nation_emb = nn.Embedding(num_embeddings=max(1, num_nations), embedding_dim=NATION_EMBEDDING_DIM)
+
+        self.num_numeric_features = int(num_features)
+        self.num_cat_features = ROLE_EMBEDDING_DIM + VEHICLE_CLASS_EMBEDDING_DIM + NATION_EMBEDDING_DIM
+
         # Encoder chaque joueur individuellement (Shared MLP)
         self.player_encoder = nn.Sequential(
-            nn.Linear(num_features, 128),
+            nn.Linear(self.num_numeric_features + self.num_cat_features, 128),
             nn.LayerNorm(128),
             nn.ReLU(),
             nn.Dropout(0.2),
@@ -370,10 +525,32 @@ class WinPredictorAttention(nn.Module):
         team_vector = torch.sum(enc * weights, dim=1)  # (B, 128)
         return team_vector
 
-    def forward(self, x_stats, x_map, x_global):
+    def forward(self, x_stats, x_map, x_global, x_cats: Optional[torch.Tensor] = None):
         # Accept either (B, 1, H, W) or (B, H, W)
         if x_stats.ndim == 4:
             x_stats = x_stats.squeeze(1)
+
+        # x_stats: (B, 30, num_numeric)
+        if x_cats is None:
+            # Provide empty embeddings if categories not provided
+            b = x_stats.size(0)
+            x_cat_emb = torch.zeros(
+                (b, x_stats.size(1), self.num_cat_features),
+                device=x_stats.device,
+                dtype=x_stats.dtype,
+            )
+        else:
+            # x_cats: (B, 30, 3)
+            roles = x_cats[:, :, 0]
+            vclasses = x_cats[:, :, 1]
+            nations = x_cats[:, :, 2]
+            x_cat_emb = torch.cat([
+                self.role_emb(roles),
+                self.vclass_emb(vclasses),
+                self.nation_emb(nations),
+            ], dim=-1)
+
+        x_stats = torch.cat([x_stats, x_cat_emb], dim=-1)
 
         # Sépare T1 et T2
         # x_stats shape: (B, 30, Features)
@@ -403,7 +580,14 @@ class WinPredictorDeepSetWithMap(nn.Module):
     - Combines both team embeddings + map embedding into a final head.
     """
 
-    def __init__(self, num_maps: int, num_features: int = len(FEATURE_COLS)):
+    def __init__(
+        self,
+        num_maps: int,
+        num_features: int = len(FEATURE_COLS),
+        num_roles: int = 1,
+        num_vehicle_classes: int = 1,
+        num_nations: int = 1,
+    ):
         super().__init__()
 
         if num_maps <= 0:
@@ -412,10 +596,16 @@ class WinPredictorDeepSetWithMap(nn.Module):
         self.num_features = int(num_features)
         self.map_embedding = nn.Embedding(num_embeddings=num_maps, embedding_dim=MAP_EMBEDDING_DIM)
 
+        # Per-player categorical embeddings (concatenated to numeric features)
+        self.role_emb = nn.Embedding(num_embeddings=max(1, num_roles), embedding_dim=ROLE_EMBEDDING_DIM)
+        self.vclass_emb = nn.Embedding(num_embeddings=max(1, num_vehicle_classes), embedding_dim=VEHICLE_CLASS_EMBEDDING_DIM)
+        self.nation_emb = nn.Embedding(num_embeddings=max(1, num_nations), embedding_dim=NATION_EMBEDDING_DIM)
+        self.num_cat_features = ROLE_EMBEDDING_DIM + VEHICLE_CLASS_EMBEDDING_DIM + NATION_EMBEDDING_DIM
+
         phi_dim = 128
 
         self.phi = nn.Sequential(
-            nn.Linear(self.num_features, 128),
+            nn.Linear(self.num_features + self.num_cat_features, 128),
             nn.ReLU(inplace=True),
             nn.Dropout(0.10),
             nn.Linear(128, phi_dim),
@@ -440,7 +630,13 @@ class WinPredictorDeepSetWithMap(nn.Module):
             nn.Linear(64, 1),
         )
 
-    def forward(self, x_stats_grid: torch.Tensor, x_map: torch.Tensor, x_global: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self,
+        x_stats_grid: torch.Tensor,
+        x_map: torch.Tensor,
+        x_global: Optional[torch.Tensor] = None,
+        x_cats: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         # Accept either (B, 1, H, W) or (B, H, W)
         if x_stats_grid.ndim == 4:
             # (B, 1, H, W) -> (B, H, W)
@@ -448,7 +644,7 @@ class WinPredictorDeepSetWithMap(nn.Module):
         else:
             x = x_stats_grid
 
-        # x: (B, 2*MAX_PLAYERS, num_features)
+        # x: (B, 2*MAX_PLAYERS, num_numeric_features)
         if x.ndim != 3:
             raise ValueError(f"Expected stats tensor with 3 dims (B, players, features), got shape={tuple(x.shape)}")
 
@@ -462,7 +658,24 @@ class WinPredictorDeepSetWithMap(nn.Module):
         if f != self.num_features:
             raise ValueError(f"Expected num_features={self.num_features}, got {f}")
 
-        x_flat = x.reshape(b * p, f)
+        if x_cats is None:
+            cat_emb = torch.zeros(
+                (b, p, self.num_cat_features),
+                device=x.device,
+                dtype=x.dtype,
+            )
+        else:
+            roles = x_cats[:, :, 0]
+            vclasses = x_cats[:, :, 1]
+            nations = x_cats[:, :, 2]
+            cat_emb = torch.cat([
+                self.role_emb(roles),
+                self.vclass_emb(vclasses),
+                self.nation_emb(nations),
+            ], dim=-1)
+
+        x_full = torch.cat([x, cat_emb], dim=-1)
+        x_flat = x_full.reshape(b * p, f + self.num_cat_features)
         e_flat = self.phi(x_flat)
         e = e_flat.reshape(b, p, -1)
 
@@ -493,13 +706,14 @@ def evaluate(model: nn.Module, loader: DataLoader) -> tuple[float, float]:
     correct = 0
     total = 0
 
-    for (stats_grid, maps, global_feats), targets in loader:
+    for (stats_grid, maps, global_feats, cats), targets in loader:
         stats_grid = stats_grid.to(device)
         maps = maps.to(device)
         global_feats = global_feats.to(device)
+        cats = cats.to(device)
         targets = targets.to(device)
 
-        logits = model(stats_grid, maps, global_feats)
+        logits = model(stats_grid, maps, global_feats, cats)
         probs = torch.sigmoid(logits)
         preds = (probs > 0.5).float()
 
@@ -523,6 +737,7 @@ def train_one_fold(
     X_stats: np.ndarray,
     X_maps: np.ndarray,
     X_global: np.ndarray,
+    X_cats: np.ndarray,
     y: np.ndarray,
     train_idx: np.ndarray,
     val_idx: np.ndarray,
@@ -533,12 +748,14 @@ def train_one_fold(
     X_train_s, X_val_s = X_stats[train_idx], X_stats[val_idx]
     X_train_m, X_val_m = X_maps[train_idx], X_maps[val_idx]
     X_train_g, X_val_g = X_global[train_idx], X_global[val_idx]
+    X_train_c, X_val_c = X_cats[train_idx], X_cats[val_idx]
     y_train, y_val = y[train_idx], y[val_idx]
 
     train_ds = WotDataset(
         X_train_s,
         X_train_m,
         X_train_g,
+        X_train_c,
         y_train,
         fit_scaler=True,
         scaler_type=scaler_type,
@@ -548,6 +765,7 @@ def train_one_fold(
         X_val_s,
         X_val_m,
         X_val_g,
+        X_val_c,
         y_val,
         scaler=train_ds.scaler,
         global_scaler=train_ds.global_scaler,
@@ -559,12 +777,33 @@ def train_one_fold(
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, drop_last=False)
     val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, drop_last=False)
 
+    num_roles = len(role_to_idx) + 1
+    num_vehicle_classes = len(vehicle_class_to_idx) + 1
+    num_nations = len(nation_to_idx) + 1
+
     if MODEL_TYPE == "cnn":
-        model = WinPredictorCNNWithMap(num_maps=num_maps).to(device)
+        model = WinPredictorCNNWithMap(
+            num_maps=num_maps,
+            num_roles=num_roles,
+            num_vehicle_classes=num_vehicle_classes,
+            num_nations=num_nations,
+        ).to(device)
     elif MODEL_TYPE == "deepset":
-        model = WinPredictorDeepSetWithMap(num_maps=num_maps, num_features=len(FEATURE_COLS)).to(device)
+        model = WinPredictorDeepSetWithMap(
+            num_maps=num_maps,
+            num_features=len(FEATURE_COLS),
+            num_roles=num_roles,
+            num_vehicle_classes=num_vehicle_classes,
+            num_nations=num_nations,
+        ).to(device)
     elif MODEL_TYPE == "attention":
-        model = WinPredictorAttention(num_maps=num_maps, num_features=len(FEATURE_COLS)).to(device)
+        model = WinPredictorAttention(
+            num_maps=num_maps,
+            num_features=len(FEATURE_COLS),
+            num_roles=num_roles,
+            num_vehicle_classes=num_vehicle_classes,
+            num_nations=num_nations,
+        ).to(device)
     else:
         raise ValueError(f"Unknown MODEL_TYPE={MODEL_TYPE}. Expected 'cnn', 'deepset' or 'attention'.")
 
@@ -584,6 +823,8 @@ def train_one_fold(
         'epoch': -1,
         'val_auc': -1.0,
         'val_acc': 0.0,
+        # Primary selection score: AUC when available else Acc
+        'score': float('-inf'),
         'state_dict': None,
         'scaler': train_ds.scaler,
         'global_scaler': train_ds.global_scaler,
@@ -595,14 +836,15 @@ def train_one_fold(
         model.train()
         running_loss = 0.0
 
-        for (stats_grid, maps, global_feats), targets in train_loader:
+        for (stats_grid, maps, global_feats, cats), targets in train_loader:
             stats_grid = stats_grid.to(device)
             maps = maps.to(device)
             global_feats = global_feats.to(device)
+            cats = cats.to(device)
             targets = targets.to(device)
 
             optimizer.zero_grad(set_to_none=True)
-            logits = model(stats_grid, maps, global_feats)
+            logits = model(stats_grid, maps, global_feats, cats)
             loss = criterion(logits, targets)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
@@ -616,11 +858,15 @@ def train_one_fold(
             lr = optimizer.param_groups[0]['lr']
             print(f"Fold {fold} | Epoch {epoch:03d} | Loss {running_loss / max(1, len(train_loader)):.4f} | Val Acc {val_acc * 100:.2f}% | Val AUC {val_auc:.4f} | LR {lr:.2e}")
 
-        improved = (not np.isnan(val_auc) and val_auc > best['val_auc'])
+        score = float(val_auc) if not np.isnan(val_auc) else float(val_acc)
+
+        # Improve on score; if tied, prefer higher accuracy.
+        improved = (score > best['score']) or (score == best['score'] and float(val_acc) > best['val_acc'])
         if improved:
             best['epoch'] = epoch
             best['val_auc'] = float(val_auc)
             best['val_acc'] = float(val_acc)
+            best['score'] = float(score)
             best['state_dict'] = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             epochs_no_improve = 0
         else:
@@ -635,6 +881,7 @@ def train_one_fold(
         'best_epoch': best['epoch'],
         'best_val_acc': best['val_acc'],
         'best_val_auc': best['val_auc'],
+        'best_score': best['score'],
     }
     artifacts = {
         'state_dict': best['state_dict'],
@@ -648,8 +895,8 @@ def train_process():
     seed_everything(42)
 
     # A. Chargement
-    # X_stats: (N, 2*MAX_PLAYERS, num_features), X_maps: (N,), X_global: (N, G), y: (N,)
-    X_stats, X_maps, X_global, y = load_data(DATA_PATH)
+    # X_stats: (N, 2*MAX_PLAYERS, num_features), X_maps: (N,), X_global: (N, G), X_cats: (N, 2*MAX_PLAYERS, 3), y: (N,)
+    X_stats, X_maps, X_global, X_cats, y = load_data(DATA_PATH)
 
     if len(X_stats) == 0:
         print("Erreur: Pas de données.")
@@ -663,11 +910,31 @@ def train_process():
     # Ensure y is 0/1 ints for StratifiedKFold
     y_int = y.astype(int)
 
-    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+    # StratifiedKFold constraint: n_splits <= n_samples and <= min(class_counts)
+    n_samples = int(len(y_int))
+    class_counts = np.bincount(y_int.astype(int), minlength=2)
+    min_class = int(class_counts.min()) if class_counts.size > 0 else 0
+    effective_splits = int(min(N_SPLITS, n_samples, min_class))
+
+    if effective_splits < 2:
+        raise ValueError(
+            f"Not enough data to run StratifiedKFold: n_samples={n_samples}, class_counts={class_counts.tolist()}, requested n_splits={N_SPLITS}. "
+            "Collect more battles or use fewer folds via --folds."
+        )
+
+    if effective_splits != int(N_SPLITS):
+        print(
+            f"Adjusting n_splits from {N_SPLITS} to {effective_splits} "
+            f"(n_samples={n_samples}, class_counts={class_counts.tolist()})."
+        )
+
+    skf = StratifiedKFold(n_splits=effective_splits, shuffle=True, random_state=42)
 
     fold_metrics: list[dict] = []
     best_overall = {
-        'val_auc': -1.0,
+        'val_auc': float('nan'),
+        'val_acc': 0.0,
+        'score': float('-inf'),
         'fold': -1,
         'state_dict': None,
         'scaler': None,
@@ -680,6 +947,7 @@ def train_process():
             X_stats=X_stats,
             X_maps=X_maps,
             X_global=X_global,
+            X_cats=X_cats,
             y=y_int,
             train_idx=train_idx,
             val_idx=val_idx,
@@ -689,8 +957,15 @@ def train_process():
         )
         fold_metrics.append(metrics)
 
-        if metrics['best_val_auc'] > best_overall['val_auc']:
-            best_overall['val_auc'] = metrics['best_val_auc']
+        m_auc = metrics['best_val_auc']
+        m_acc = metrics['best_val_acc']
+        m_score = metrics.get('best_score', float(m_auc) if not np.isnan(m_auc) else float(m_acc))
+
+        better = (m_score > best_overall['score']) or (m_score == best_overall['score'] and float(m_acc) > float(best_overall['val_acc']))
+        if better:
+            best_overall['score'] = float(m_score)
+            best_overall['val_auc'] = float(m_auc)
+            best_overall['val_acc'] = float(m_acc)
             best_overall['fold'] = fold
             best_overall['state_dict'] = artifacts['state_dict']
             best_overall['scaler'] = artifacts['scaler']
@@ -706,7 +981,11 @@ def train_process():
     if len(aucs) > 0:
         print(f"Mean Val AUC: {float(np.mean(aucs)):.4f} (+/- {float(np.std(aucs)):.4f})")
     print(f"Mean Val Acc: {float(np.mean(accs)) * 100:.2f}% (+/- {float(np.std(accs)) * 100:.2f}%)")
-    print(f"Best fold: {best_overall['fold']} (AUC {best_overall['val_auc']:.4f})")
+
+    if not np.isnan(best_overall['val_auc']):
+        print(f"Best fold: {best_overall['fold']} (AUC {best_overall['val_auc']:.4f}, Acc {best_overall['val_acc'] * 100:.2f}%)")
+    else:
+        print(f"Best fold: {best_overall['fold']} (Acc {best_overall['val_acc'] * 100:.2f}%)")
 
     # Save best fold model + scaler + map dict
     if best_overall['state_dict'] is None:
@@ -721,10 +1000,30 @@ def train_process():
             'scaler_type': SCALER_TYPE,
             'global_scaler_type': GLOBAL_SCALER_TYPE,
             'global_features': GLOBAL_FEATURES,
+            'player_numeric_cols': PLAYER_NUMERIC_COLS,
+            'player_categorical_cols': PLAYER_CATEGORICAL_COLS,
+            'categorical_mappings': {
+                'tankRole': role_to_idx,
+                'tankVehicleClass': vehicle_class_to_idx,
+                'tankNation': nation_to_idx,
+            },
+            'categorical_embedding_dims': {
+                'tankRole': ROLE_EMBEDDING_DIM,
+                'tankVehicleClass': VEHICLE_CLASS_EMBEDDING_DIM,
+                'tankNation': NATION_EMBEDDING_DIM,
+            },
         },
         "scaler.pkl",
     )
     joblib.dump(map_to_idx, "map_index.pkl")
+    joblib.dump(
+        {
+            'tankRole': role_to_idx,
+            'tankVehicleClass': vehicle_class_to_idx,
+            'tankNation': nation_to_idx,
+        },
+        "categorical_index.pkl",
+    )
     print("Modèle (best fold), scaler et map_index sauvegardés.")
 
 

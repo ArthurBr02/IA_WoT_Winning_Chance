@@ -15,14 +15,24 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.*;
 
 public class PlayerService {
     private static final Logger logger = LoggerFactory.getLogger(PlayerService.class);
     private static final String API_URL = "https://tomato.gg/stats/{player_name}-{player_id}/EU";
     private static final int MAX_429_RETRIES = 1000;
+    private static final int MIN_THREAD_COUNT = 8;
 
     public static Player fetchPlayer(Long playerId, String name) {
-        logger.info("Fetching player with ID: {}", playerId);
+        return fetchPlayer(playerId, name, -1, -1);
+    }
+
+    public static Player fetchPlayer(Long playerId, String name, int currentIndex, int totalCount) {
+        if (currentIndex >= 0 && totalCount > 0) {
+            logger.info("Fetching player {}/{} with ID: {}", currentIndex, totalCount, playerId);
+        } else {
+            logger.info("Fetching player with ID: {}", playerId);
+        }
         String url = API_URL.replace("{player_id}", playerId.toString()).replace("{player_name}", name);
 
         try (CloseableHttpClient httpClient = HttpClientsUtils.getHttpClientWithRetry()) {
@@ -82,16 +92,73 @@ public class PlayerService {
     }
 
     public static List<Player> fetchPlayers(List<Long> playerIds, Map<Long, String> playerNames) {
+        return fetchPlayers(playerIds, playerNames, null);
+    }
+
+    public static List<Player> fetchPlayers(List<Long> playerIds, Map<Long, String> playerNames,
+                                            java.util.function.Consumer<List<Player>> progressCallback) {
         List<Player> players = new ArrayList<>();
+
+        if (playerIds.isEmpty()) {
+            return players;
+        }
+
+        int totalCount = playerIds.size();
+
+        // Créer un ExecutorService avec un nombre de threads = max(8, nombre de CPUs)
+        int threadCount = Math.max(MIN_THREAD_COUNT, Runtime.getRuntime().availableProcessors());
+        logger.info("Using {} threads for fetching {} players (min: {})", threadCount, totalCount, MIN_THREAD_COUNT);
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        List<Future<Player>> futures = new ArrayList<>();
+
+        // Soumettre toutes les tâches
+        int index = 0;
         for (Long playerId : playerIds) {
             String name = playerNames.get(playerId);
             if (name == null) {
                 logger.warn("Player name not found for ID: {}. Skipping.", playerId);
                 continue;
             }
-            Player player = fetchPlayer(playerId, name);
-            players.add(player);
+
+            int currentIndex = ++index;
+            Future<Player> future = executor.submit(() -> fetchPlayer(playerId, name, currentIndex, totalCount));
+            futures.add(future);
         }
+
+        // Récupérer les résultats avec export tous les 200 joueurs
+        int processedCount = 0;
+        for (Future<Player> future : futures) {
+            try {
+                Player player = future.get();
+                if (player != null) {
+                    players.add(player);
+                    processedCount++;
+
+                    // Appeler le callback tous les 200 joueurs
+                    if (progressCallback != null && processedCount % 200 == 0) {
+                        logger.info("Progress: {} players fetched so far", processedCount);
+                        progressCallback.accept(new ArrayList<>(players));
+                    }
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.error("Thread interrupted while fetching Player", e);
+            } catch (ExecutionException e) {
+                logger.error("Error fetching Player", e.getCause());
+            }
+        }
+
+        // Arrêter l'executor
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+
         return players;
     }
 }
