@@ -1,6 +1,9 @@
 package fr.arthurbr02.player;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import fr.arthurbr02.player.tanks.Tanks;
+
+import java.util.List;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class Data {
@@ -66,6 +69,8 @@ public class Data {
     private Integer xp;
 
     private Double kd;
+
+    private Tanks tanks;
 
     // Getters and Setters
 
@@ -315,5 +320,13 @@ public class Data {
 
     public void setKd(Double kd) {
         this.kd = kd;
+    }
+
+    public Tanks getTanks() {
+        return tanks;
+    }
+
+    public void setTanks(Tanks tanks) {
+        this.tanks = tanks;
     }
 }

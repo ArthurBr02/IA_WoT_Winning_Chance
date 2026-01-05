@@ -1,10 +1,12 @@
 package fr.arthurbr02.player;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import fr.arthurbr02.player.playerdata.Data;
+import fr.arthurbr02.player.playerdata.PlayerData;
 import fr.arthurbr02.utils.HttpClientsUtils;
-import org.apache.hc.client5.http.classic.CloseableHttpResponse;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.core5.http.HttpEntity;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.slf4j.Logger;
@@ -12,15 +14,16 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class PlayerService {
     private static final Logger logger = LoggerFactory.getLogger(PlayerService.class);
-    private static final String API_URL = "https://api.tomato.gg/api/player/overall/eu/{player_id}";
+    private static final String API_URL = "https://tomato.gg/stats/{player_name}-{player_id}/EU";
     private static final int MAX_429_RETRIES = 1000;
 
-    public static Player fetchPlayer(Long playerId) {
+    public static Player fetchPlayer(Long playerId, String name) {
         logger.info("Fetching player with ID: {}", playerId);
-        String url = API_URL.replace("{player_id}", playerId.toString());
+        String url = API_URL.replace("{player_id}", playerId.toString()).replace("{player_name}", name);
 
         try (CloseableHttpClient httpClient = HttpClientsUtils.getHttpClientWithRetry()) {
             ObjectMapper mapper = new ObjectMapper();
@@ -51,7 +54,17 @@ public class PlayerService {
                     }
 
                     String result = EntityUtils.toString(entity);
-                    return mapper.readValue(result, Player.class);
+                    PlayerData playerData = PlayerData.fromHtml(result, mapper);
+                    if (playerData == null) {
+                        logger.warn("Failed to parse PlayerData from HTML for {}", url);
+                        return null;
+                    }
+                    Data data = playerData.getData();
+
+                    Player player = new Player();
+                    player.setData(data);
+
+                    return player;
                 }
             }
 
@@ -68,10 +81,15 @@ public class PlayerService {
         return null;
     }
 
-    public static List<Player> fetchPlayers(List<Long> playerIds) {
+    public static List<Player> fetchPlayers(List<Long> playerIds, Map<Long, String> playerNames) {
         List<Player> players = new ArrayList<>();
         for (Long playerId : playerIds) {
-            Player player = fetchPlayer(playerId);
+            String name = playerNames.get(playerId);
+            if (name == null) {
+                logger.warn("Player name not found for ID: {}. Skipping.", playerId);
+                continue;
+            }
+            Player player = fetchPlayer(playerId, name);
             players.add(player);
         }
         return players;

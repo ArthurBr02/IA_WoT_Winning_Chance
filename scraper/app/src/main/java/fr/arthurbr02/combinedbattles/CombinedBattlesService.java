@@ -4,8 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import fr.arthurbr02.battledetail.BattleDetail;
 import fr.arthurbr02.utils.HttpClientsUtils;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
-import org.apache.hc.client5.http.classic.CloseableHttpResponse;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.core5.http.HttpEntity;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.slf4j.Logger;
@@ -18,7 +18,7 @@ import static fr.arthurbr02.battledetail.BattleDetailService.fetchBattleDetail;
 
 public class CombinedBattlesService {
     private static final Logger logger = LoggerFactory.getLogger(CombinedBattlesService.class);
-    private static final String API_URL = "https://api.tomato.gg/api/player/combined-battles/{player_id}?page=0&days=36500&pageSize=50&sortBy=battle_time&sortDirection=desc&platoon=in-and-outside-platoon&spawn=all&won=all&classes=&nations=&roles=&tiers=&tankType=all";
+    private static final String API_URL = "https://api.tomato.gg/api/player/combined-battles/{player_id}?page=0&days=36500&pageSize=10&sortBy=battle_time&sortDirection=desc&platoon=in-and-outside-platoon&spawn=all&won=all&classes=&nations=&roles=&tiers=&tankType=all";
     private static final int MAX_429_RETRIES = 1000;
 
     public static CombinedBattles fetchCombinedBattles(String playerId) {

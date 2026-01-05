@@ -1,5 +1,7 @@
 package fr.arthurbr02.player;
 
+import fr.arthurbr02.player.playerdata.Data;
+
 public class Player {
     private Meta meta;
     private Data data;

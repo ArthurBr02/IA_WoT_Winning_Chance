@@ -1,59 +1,114 @@
 package fr.arthurbr02;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import fr.arthurbr02.battledetail.BattleDetail;
+import fr.arthurbr02.battledetail.Player;
+import fr.arthurbr02.battledetail.Players;
 import fr.arthurbr02.combinedbattles.CombinedBattles;
 import fr.arthurbr02.combinedbattles.CombinedBattlesService;
 import fr.arthurbr02.export.ExportData;
 import fr.arthurbr02.export.ExportService;
 import fr.arthurbr02.player.PlayerService;
+import fr.arthurbr02.player.playerdata.PlayerData;
+import fr.arthurbr02.utils.HttpClientsUtils;
 import fr.arthurbr02.utils.ProgressManager;
 import fr.arthurbr02.utils.ProgressState;
+import org.apache.hc.client5.http.classic.methods.HttpGet;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.*;
 
 public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
     private static final String INITIAL_PLAYER_ID = "532440001";
-    private static final int PLAYERS_TO_FETCH = 100;
+    private static final int PLAYERS_TO_FETCH = 50;
+    private static final int MAX_429_RETRIES = 1000;
+
+    private static final boolean TEST_MODE = false;
 
     public static void main(String[] args) {
-        logger.info("=== Starting scraper ===");
+        if (TEST_MODE) test();
+        else {
+            logger.info("=== Starting scraper ===");
 
-        // Vérifier s'il existe une progression sauvegardée
-        ProgressState state = ProgressManager.loadProgress();
+            // Vérifier s'il existe une progression sauvegardée
+            ProgressState state = ProgressManager.loadProgress();
 
-        if (state == null) {
-            // Nouvelle exécution - initialiser l'état
-            logger.info("Starting new scraping session");
-            state = initializeNewProgress();
-        } else {
-            // Reprise depuis une sauvegarde
-            logger.info("Resuming from previous session");
-            logger.info("Start time: {}", state.getStartTime());
-            logger.info("Last update: {}", state.getLastUpdateTime());
+            if (state == null) {
+                // Nouvelle exécution - initialiser l'état
+                logger.info("Starting new scraping session");
+                state = initializeNewProgress();
+            } else {
+                // Reprise depuis une sauvegarde
+                logger.info("Resuming from previous session");
+                logger.info("Start time: {}", state.getStartTime());
+                logger.info("Last update: {}", state.getLastUpdateTime());
+            }
+
+            try {
+                // Exécuter le scraping avec gestion de progression
+                executeScraping(state);
+
+                // Exporter les données finales
+                Date now = new Date();
+                ExportService.exportData(
+                        new ExportData(null, state.getBattleDetails(), state.getPlayers()),
+                        now
+                );
+
+                // Nettoyer les fichiers de progression après succès
+                logger.info("Scraping completed successfully!");
+                ProgressManager.clearProgress();
+
+            } catch (Exception e) {
+                logger.error("Error during scraping - progress has been saved", e);
+                ProgressManager.saveProgress(state);
+                System.exit(1);
+            }
         }
+    }
 
-        try {
-            // Exécuter le scraping avec gestion de progression
-            executeScraping(state);
+    private static void test() {
+        String testUrl = "https://tomato.gg/stats/ArthuroELMANIFICO-532440001/EU";
+        try (CloseableHttpClient httpClient = HttpClientsUtils.getHttpClientWithRetry()) {
+            ObjectMapper mapper = new ObjectMapper();
+            for (int attempt = 1; attempt <= MAX_429_RETRIES; attempt++) {
+                HttpGet request = new HttpGet(testUrl);
+                try (CloseableHttpResponse response = httpClient.execute(request)) {
+                    int code = response.getCode();
+                    InputStream content = response.getEntity().getContent();
 
-            // Exporter les données finales
-            Date now = new Date();
-            ExportService.exportData(
-                new ExportData(null, state.getBattleDetails(), state.getPlayers()),
-                now
-            );
+                    // Affichage du code de réponse et du contenu
+                    System.out.println("HTTP Response Code: " + code);
+                    String result = new String(content.readAllBytes());
+                    System.out.println("Response Content: " + result);
 
-            // Nettoyer les fichiers de progression après succès
-            logger.info("Scraping completed successfully!");
-            ProgressManager.clearProgress();
+                    // Il faut récupérer le contenu de la balise script id __NEXT_DATA__ et le parser en JSON
+                    int scriptStart = result.indexOf("<script id=\"__NEXT_DATA__\" type=\"application/json\">");
+                    int scriptEnd = result.indexOf("</script>", scriptStart);
+                    if (scriptStart == -1 || scriptEnd == -1) {
+                        System.out.println("Script tag not found");
+                        return;
+                    }
 
-        } catch (Exception e) {
-            logger.error("Error during scraping - progress has been saved", e);
-            ProgressManager.saveProgress(state);
-            System.exit(1);
+                    String jsonData = result.substring(
+                            scriptStart + "<script id=\"__NEXT_DATA__\" type=\"application/json\">".length(),
+                            scriptEnd
+                    );
+                    System.out.println("Extracted JSON Data: " + jsonData);
+                    // Maintenant on peut parser jsonData avec Jackson
+                    PlayerData data = mapper.readValue(jsonData, PlayerData.class);
+                    System.out.println("Parsed JSON Data: " + data);
+                    return;
+                }
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -187,8 +242,12 @@ public class Main {
 
         // On récupère les IDs de tous les joueurs de tous les BattleDetails
         Set<Long> allPlayerIds = new HashSet<>();
+        Map<Long, String> playerNames = new HashMap<>();
         for (BattleDetail detail : state.getBattleDetails()) {
-            allPlayerIds.addAll(detail.getPlayerIds());
+            for (Player p : detail.getPlayers()) {
+                allPlayerIds.add(p.getPlayerId());
+                playerNames.put(p.getPlayerId(), p.getUsername());
+            }
         }
 
         logger.info("Total unique players to fetch details for: {}", allPlayerIds.size());
@@ -196,7 +255,7 @@ public class Main {
         // Récupérer les informations détaillées des joueurs traités
         logger.info("Fetching detailed player information");
         List<fr.arthurbr02.player.Player> players =
-            PlayerService.fetchPlayers(new ArrayList<>(allPlayerIds));
+            PlayerService.fetchPlayers(new ArrayList<>(allPlayerIds), playerNames);
         state.setPlayers(players);
 
         // Sauvegarde finale
